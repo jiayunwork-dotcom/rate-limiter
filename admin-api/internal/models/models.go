@@ -21,39 +21,39 @@ type RuleDimensions struct {
 }
 
 type TokenBucketConfig struct {
-	RefillRate    int64 `json:"refill_rate"`
+	RefillRate    int64 `json:"refillRate"`
 	Capacity      int64 `json:"capacity"`
-	TokensPerReq  int64 `json:"tokens_per_req"`
+	TokensPerReq  int64 `json:"tokensPerReq"`
 }
 
 type LeakyBucketConfig struct {
-	OutRate  int64 `json:"out_rate"`
+	OutRate  int64 `json:"outflowRate"`
 	Capacity int64 `json:"capacity"`
 }
 
 type ShapingConfig struct {
 	Enabled         bool  `json:"enabled"`
-	MaxQueueDepth   int   `json:"max_queue_depth"`
-	MaxWaitMs       int64 `json:"max_wait_ms"`
-	PriorityEnabled bool  `json:"priority_enabled"`
+	MaxQueueDepth   int   `json:"maxQueueDepth"`
+	MaxWaitMs       int64 `json:"maxWaitMs"`
+	PriorityEnabled bool  `json:"priorityEnabled"`
 }
 
 type GrayReleaseConfig struct {
 	Enabled        bool    `json:"enabled"`
-	TrafficRatio   float64 `json:"traffic_ratio"`
-	RollbackVersion int64  `json:"rollback_version"`
+	TrafficRatio   float64 `json:"trafficPercent"`
+	RollbackVersion int64  `json:"rollbackVersion"`
 }
 
 type RateLimitRule struct {
 	ID                string            `json:"id" gorm:"column:id;primaryKey"`
 	Name              string            `json:"name" gorm:"column:name"`
-	APIPath           string            `json:"api_path" gorm:"column:api_path"`
+	APIPath           string            `json:"apiPath" gorm:"column:api_path"`
 	Method            string            `json:"method" gorm:"column:method"`
 	Algorithm         AlgorithmType     `json:"algorithm" gorm:"column:algorithm"`
 	Enabled           bool              `json:"enabled" gorm:"column:enabled"`
 	Version           int64             `json:"version" gorm:"column:version"`
 	Limit             int64             `json:"limit" gorm:"column:limit_count"`
-	WindowSeconds     int64             `json:"window_seconds" gorm:"column:window_seconds"`
+	WindowSeconds     int64             `json:"windowSeconds" gorm:"column:window_seconds"`
 	DimensionsJSON    json.RawMessage   `json:"-" gorm:"column:dimensions"`
 	TokenBucketJSON   *json.RawMessage  `json:"-" gorm:"column:token_bucket_config"`
 	LeakyBucketJSON   *json.RawMessage  `json:"-" gorm:"column:leaky_bucket_config"`
@@ -61,12 +61,12 @@ type RateLimitRule struct {
 	GrayReleaseJSON   *json.RawMessage  `json:"-" gorm:"column:gray_release_config"`
 	ConfigJSON        json.RawMessage   `json:"-" gorm:"column:config_json"`
 	Dimensions        *RuleDimensions     `json:"dimensions" gorm:"-"`
-	TokenBucketConfig *TokenBucketConfig  `json:"token_bucket_config,omitempty" gorm:"-"`
-	LeakyBucketConfig *LeakyBucketConfig  `json:"leaky_bucket_config,omitempty" gorm:"-"`
-	ShapingConfig     *ShapingConfig      `json:"shaping_config,omitempty" gorm:"-"`
-	GrayReleaseConfig *GrayReleaseConfig  `json:"gray_release_config,omitempty" gorm:"-"`
-	CreatedAt         time.Time         `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt         time.Time         `json:"updated_at" gorm:"column:updated_at"`
+	TokenBucketConfig *TokenBucketConfig  `json:"tokenBucketConfig,omitempty" gorm:"-"`
+	LeakyBucketConfig *LeakyBucketConfig  `json:"leakyBucketConfig,omitempty" gorm:"-"`
+	ShapingConfig     *ShapingConfig      `json:"shapingConfig,omitempty" gorm:"-"`
+	GrayReleaseConfig *GrayReleaseConfig  `json:"grayRelease,omitempty" gorm:"-"`
+	CreatedAt         time.Time         `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt         time.Time         `json:"updatedAt" gorm:"column:updated_at"`
 }
 
 func (RateLimitRule) TableName() string {
@@ -262,15 +262,15 @@ type RuleTemplate struct {
 	Description       string            `json:"description" gorm:"column:description"`
 	Algorithm         AlgorithmType     `json:"algorithm" gorm:"column:algorithm"`
 	Limit             int64             `json:"limit" gorm:"column:limit_count"`
-	WindowSeconds     int64             `json:"window_seconds" gorm:"column:window_seconds"`
+	WindowSeconds     int64             `json:"windowSeconds" gorm:"column:window_seconds"`
 	TokenBucketJSON   *json.RawMessage  `json:"-" gorm:"column:token_bucket_config"`
 	LeakyBucketJSON   *json.RawMessage  `json:"-" gorm:"column:leaky_bucket_config"`
 	ShapingJSON       *json.RawMessage  `json:"-" gorm:"column:shaping_config"`
-	TokenBucketConfig *TokenBucketConfig `json:"token_bucket_config,omitempty" gorm:"-"`
-	LeakyBucketConfig *LeakyBucketConfig `json:"leaky_bucket_config,omitempty" gorm:"-"`
-	ShapingConfig     *ShapingConfig     `json:"shaping_config,omitempty" gorm:"-"`
-	CreatedAt         time.Time         `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt         time.Time         `json:"updated_at" gorm:"column:updated_at"`
+	TokenBucketConfig *TokenBucketConfig `json:"tokenBucketConfig,omitempty" gorm:"-"`
+	LeakyBucketConfig *LeakyBucketConfig `json:"leakyBucketConfig,omitempty" gorm:"-"`
+	ShapingConfig     *ShapingConfig     `json:"shapingConfig,omitempty" gorm:"-"`
+	CreatedAt         time.Time         `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt         time.Time         `json:"updatedAt" gorm:"column:updated_at"`
 }
 
 func (RuleTemplate) TableName() string {
