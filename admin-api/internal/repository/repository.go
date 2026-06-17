@@ -27,6 +27,27 @@ func generateUUID() string {
 		hex.EncodeToString(b[10:16])
 }
 
+var snakeToCamel = map[string]string{
+	`"refill_rate":`:      `"refillRate":`,
+	`"tokens_per_req":`:   `"tokensPerReq":`,
+	`"out_rate":`:         `"outflowRate":`,
+	`"max_queue_depth":`:  `"maxQueueDepth":`,
+	`"max_wait_ms":`:      `"maxWaitMs":`,
+	`"priority_enabled":`: `"priorityEnabled":`,
+	`"traffic_ratio":`:    `"trafficPercent":`,
+	`"rollback_version":`: `"rollbackVersion":`,
+	`"combine_mode":`:     `"combineMode":`,
+	`"header_name":`:      `"headerName":`,
+}
+
+func normalizeJSONKeys(data []byte) []byte {
+	s := string(data)
+	for snake, camel := range snakeToCamel {
+		s = strings.ReplaceAll(s, snake, camel)
+	}
+	return []byte(s)
+}
+
 type RuleRepo struct {
 	db *gorm.DB
 }
@@ -204,32 +225,37 @@ func marshalRuleFields(rule *models.RateLimitRule) {
 
 func unmarshalRuleFields(rule *models.RateLimitRule) {
 	if len(rule.DimensionsJSON) > 0 {
+		normalized := normalizeJSONKeys(rule.DimensionsJSON)
 		var dims models.RuleDimensions
-		if json.Unmarshal(rule.DimensionsJSON, &dims) == nil {
+		if json.Unmarshal(normalized, &dims) == nil {
 			rule.Dimensions = &dims
 		}
 	}
 	if rule.TokenBucketJSON != nil && len(*rule.TokenBucketJSON) > 0 {
+		normalized := normalizeJSONKeys(*rule.TokenBucketJSON)
 		var cfg models.TokenBucketConfig
-		if json.Unmarshal(*rule.TokenBucketJSON, &cfg) == nil {
+		if json.Unmarshal(normalized, &cfg) == nil {
 			rule.TokenBucketConfig = &cfg
 		}
 	}
 	if rule.LeakyBucketJSON != nil && len(*rule.LeakyBucketJSON) > 0 {
+		normalized := normalizeJSONKeys(*rule.LeakyBucketJSON)
 		var cfg models.LeakyBucketConfig
-		if json.Unmarshal(*rule.LeakyBucketJSON, &cfg) == nil {
+		if json.Unmarshal(normalized, &cfg) == nil {
 			rule.LeakyBucketConfig = &cfg
 		}
 	}
 	if rule.ShapingJSON != nil && len(*rule.ShapingJSON) > 0 {
+		normalized := normalizeJSONKeys(*rule.ShapingJSON)
 		var cfg models.ShapingConfig
-		if json.Unmarshal(*rule.ShapingJSON, &cfg) == nil {
+		if json.Unmarshal(normalized, &cfg) == nil {
 			rule.ShapingConfig = &cfg
 		}
 	}
 	if rule.GrayReleaseJSON != nil && len(*rule.GrayReleaseJSON) > 0 {
+		normalized := normalizeJSONKeys(*rule.GrayReleaseJSON)
 		var cfg models.GrayReleaseConfig
-		if json.Unmarshal(*rule.GrayReleaseJSON, &cfg) == nil {
+		if json.Unmarshal(normalized, &cfg) == nil {
 			rule.GrayReleaseConfig = &cfg
 		}
 	}
@@ -655,20 +681,23 @@ func marshalTemplateFields(template *models.RuleTemplate) {
 
 func unmarshalTemplateFields(template *models.RuleTemplate) {
 	if template.TokenBucketJSON != nil && len(*template.TokenBucketJSON) > 0 {
+		normalized := normalizeJSONKeys(*template.TokenBucketJSON)
 		var cfg models.TokenBucketConfig
-		if json.Unmarshal(*template.TokenBucketJSON, &cfg) == nil {
+		if json.Unmarshal(normalized, &cfg) == nil {
 			template.TokenBucketConfig = &cfg
 		}
 	}
 	if template.LeakyBucketJSON != nil && len(*template.LeakyBucketJSON) > 0 {
+		normalized := normalizeJSONKeys(*template.LeakyBucketJSON)
 		var cfg models.LeakyBucketConfig
-		if json.Unmarshal(*template.LeakyBucketJSON, &cfg) == nil {
+		if json.Unmarshal(normalized, &cfg) == nil {
 			template.LeakyBucketConfig = &cfg
 		}
 	}
 	if template.ShapingJSON != nil && len(*template.ShapingJSON) > 0 {
+		normalized := normalizeJSONKeys(*template.ShapingJSON)
 		var cfg models.ShapingConfig
-		if json.Unmarshal(*template.ShapingJSON, &cfg) == nil {
+		if json.Unmarshal(normalized, &cfg) == nil {
 			template.ShapingConfig = &cfg
 		}
 	}

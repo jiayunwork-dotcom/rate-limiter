@@ -17,7 +17,7 @@ type Dimension struct {
 
 type RuleDimensions struct {
 	Dimensions  []Dimension `json:"dimensions"`
-	CombineMode string      `json:"combine_mode"`
+	CombineMode string      `json:"combineMode"`
 }
 
 type TokenBucketConfig struct {
