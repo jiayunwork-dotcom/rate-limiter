@@ -1,0 +1,18 @@
+http_addr: ":8081"
+redis_addr: "redis:6379"
+redis_password: "redis_r@te_limiter"
+redis_db: 0
+postgres_dsn: "host=postgres port=5432 user=ratelimiter password=ratelimiter_p@ssw0rd dbname=ratelimiter sslmode=disable"
+
+jwt:
+  secret: "ratelimiter-admin-jwt-secret-change-in-production"
+  expire_hours: 24
+
+pagination:
+  default_page_size: 20
+  max_page_size: 200
+
+events:
+  retention_days: 30
+  flush_interval_sec: 5
+  batch_size: 100

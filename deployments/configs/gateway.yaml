@@ -1,0 +1,51 @@
+http_addr: ":8080"
+grpc_addr: ":9090"
+redis_addr: "redis:6379"
+redis_password: "redis_r@te_limiter"
+redis_db: 0
+postgres_dsn: "host=postgres port=5432 user=ratelimiter password=ratelimiter_p@ssw0rd dbname=ratelimiter sslmode=disable"
+target_url: "http://httpbin:80"
+node_id: "gateway-node-1"
+
+default_limits:
+  global:
+    limit: 10000
+    window_seconds: 60
+  tenant:
+    limit: 5000
+    window_seconds: 60
+  user:
+    limit: 1000
+    window_seconds: 60
+  api:
+    limit: 500
+    window_seconds: 60
+
+adaptive:
+  enabled: true
+  target_p99_latency_ms: 200
+  error_rate_threshold: 0.05
+  min_coefficient: 0.3
+  max_coefficient: 1.0
+  tightening_ratio: 0.7
+  recovery_interval_sec: 10
+  recovery_step_percent: 10
+  stable_period_sec: 30
+  pid:
+    kp: 0.5
+    ki: 0.1
+    kd: 0.2
+    setpoint: 200
+    output_min: -30
+    output_max: 30
+
+fallback:
+  local_mode_instance_count: 3
+  health_check_interval_sec: 5
+  consecutive_failures_threshold: 3
+  consecutive_successes_threshold: 3
+
+queue:
+  default_max_depth: 100
+  default_max_wait_ms: 2000
+  backpressure_threshold: 0.8

@@ -1,0 +1,201 @@
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS rate_limit_rules (
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::VARCHAR,
+    name VARCHAR(255) NOT NULL,
+    api_path VARCHAR(512) NOT NULL DEFAULT '*',
+    method VARCHAR(16) NOT NULL DEFAULT '*',
+    algorithm VARCHAR(32) NOT NULL DEFAULT 'token_bucket',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    version BIGINT NOT NULL DEFAULT 1,
+    limit_count BIGINT NOT NULL DEFAULT 100,
+    window_seconds BIGINT NOT NULL DEFAULT 60,
+    dimensions JSONB NOT NULL DEFAULT '{}',
+    token_bucket_config JSONB,
+    leaky_bucket_config JSONB,
+    shaping_config JSONB,
+    gray_release_config JSONB,
+    config_json JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_rate_limit_rules_enabled ON rate_limit_rules(enabled);
+CREATE INDEX idx_rate_limit_rules_api_path ON rate_limit_rules(api_path);
+CREATE INDEX idx_rate_limit_rules_algorithm ON rate_limit_rules(algorithm);
+
+CREATE TABLE IF NOT EXISTS rule_versions (
+    id BIGSERIAL PRIMARY KEY,
+    rule_id VARCHAR(64) NOT NULL REFERENCES rate_limit_rules(id) ON DELETE CASCADE,
+    version BIGINT NOT NULL,
+    config_json JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_rule_versions_rule_id ON rule_versions(rule_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS quota_configs (
+    id BIGSERIAL PRIMARY KEY,
+    quota_level VARCHAR(16) NOT NULL,
+    identifier VARCHAR(256) NOT NULL,
+    limit_count BIGINT NOT NULL,
+    window_seconds BIGINT NOT NULL DEFAULT 60,
+    inherit_from BOOLEAN NOT NULL DEFAULT true,
+    override_value BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE(quota_level, identifier)
+);
+
+CREATE TABLE IF NOT EXISTS rate_limit_events (
+    id BIGSERIAL PRIMARY KEY,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    request_id VARCHAR(128),
+    allowed BOOLEAN NOT NULL,
+    rule_id VARCHAR(64),
+    rule_name VARCHAR(255),
+    dimensions JSONB,
+    limit_count BIGINT,
+    remaining BIGINT,
+    api_path VARCHAR(512),
+    method VARCHAR(16),
+    user_id VARCHAR(128),
+    tenant_id VARCHAR(128),
+    client_ip VARCHAR(64),
+    triggered_level VARCHAR(16),
+    mode VARCHAR(16)
+);
+
+CREATE INDEX idx_rate_limit_events_timestamp ON rate_limit_events(timestamp DESC);
+CREATE INDEX idx_rate_limit_events_tenant ON rate_limit_events(tenant_id, timestamp DESC);
+CREATE INDEX idx_rate_limit_events_api ON rate_limit_events(api_path, timestamp DESC);
+CREATE INDEX idx_rate_limit_events_allowed ON rate_limit_events(allowed, timestamp DESC);
+CREATE INDEX idx_rate_limit_events_rule ON rate_limit_events(rule_id, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS tenants (
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::VARCHAR,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS api_users (
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::VARCHAR,
+    tenant_id VARCHAR(64) REFERENCES tenants(id),
+    name VARCHAR(255),
+    email VARCHAR(255),
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_api_users_tenant ON api_users(tenant_id);
+
+CREATE TABLE IF NOT EXISTS api_endpoints (
+    id BIGSERIAL PRIMARY KEY,
+    path VARCHAR(512) NOT NULL,
+    method VARCHAR(16) NOT NULL,
+    description TEXT,
+    tenant_id VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE(path, method)
+);
+
+CREATE TABLE IF NOT EXISTS adaptive_configs (
+    id BIGSERIAL PRIMARY KEY,
+    component VARCHAR(64) NOT NULL UNIQUE,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    target_p99_latency_ms BIGINT NOT NULL DEFAULT 200,
+    error_rate_threshold DOUBLE PRECISION NOT NULL DEFAULT 0.05,
+    min_coefficient DOUBLE PRECISION NOT NULL DEFAULT 0.3,
+    max_coefficient DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    tightening_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+    recovery_interval_sec BIGINT NOT NULL DEFAULT 10,
+    recovery_step_percent DOUBLE PRECISION NOT NULL DEFAULT 10,
+    stable_period_sec BIGINT NOT NULL DEFAULT 30,
+    pid_kp DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+    pid_ki DOUBLE PRECISION NOT NULL DEFAULT 0.1,
+    pid_kd DOUBLE PRECISION NOT NULL DEFAULT 0.2,
+    pid_setpoint DOUBLE PRECISION NOT NULL DEFAULT 200,
+    pid_output_min DOUBLE PRECISION NOT NULL DEFAULT -30,
+    pid_output_max DOUBLE PRECISION NOT NULL DEFAULT 30,
+    manual_override_coeff DOUBLE PRECISION,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS admin_users (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(128) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    email VARCHAR(255),
+    role VARCHAR(32) NOT NULL DEFAULT 'viewer',
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    last_login_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE OR REPLACE FUNCTION update_timestamp_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_update_rate_limit_rules_timestamp
+BEFORE UPDATE ON rate_limit_rules
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TRIGGER trg_update_quota_configs_timestamp
+BEFORE UPDATE ON quota_configs
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TRIGGER trg_update_tenants_timestamp
+BEFORE UPDATE ON tenants
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TRIGGER trg_update_api_users_timestamp
+BEFORE UPDATE ON api_users
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TRIGGER trg_update_adaptive_configs_timestamp
+BEFORE UPDATE ON adaptive_configs
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+INSERT INTO tenants (id, name, description) VALUES
+('tenant-demo-1', 'Demo Tenant 1', 'First demo tenant for testing'),
+('tenant-demo-2', 'Demo Tenant 2', 'Second demo tenant for testing')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO admin_users (username, password_hash, email, role) VALUES
+('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'admin@ratelimiter.local', 'admin')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO adaptive_configs (component) VALUES ('global') ON CONFLICT DO NOTHING;
+
+INSERT INTO rate_limit_rules (id, name, api_path, method, algorithm, limit_count, window_seconds, config_json, token_bucket_config, shaping_config) VALUES
+(
+    'api-login-protect',
+    'Login API Protection',
+    '/api/auth/login',
+    'POST',
+    'sliding_window',
+    5,
+    60,
+    '{}',
+    NULL,
+    '{"enabled": true, "max_queue_depth": 20, "max_wait_ms": 5000, "priority_enabled": false}'
+),
+(
+    'tenant-wide-api',
+    'Per-tenant API Limit',
+    '*',
+    '*',
+    'token_bucket',
+    10000,
+    60,
+    '{}',
+    '{"refill_rate": 167, "capacity": 10000, "tokens_per_req": 1}',
+    '{"enabled": true, "max_queue_depth": 200, "max_wait_ms": 3000, "priority_enabled": true}'
+)
+ON CONFLICT DO NOTHING;
