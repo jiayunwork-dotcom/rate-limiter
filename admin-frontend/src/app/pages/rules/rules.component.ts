@@ -254,7 +254,8 @@ export class RulesComponent implements OnInit {
 }
 
 import { MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
-import { Inject, Component } from '@angular/core';
+import { MatRadioModule } from '@angular/material/radio';
+import { Inject } from '@angular/core';
 
 @Component({
   selector: 'app-rule-form-dialog',
@@ -262,7 +263,7 @@ import { Inject, Component } from '@angular/core';
   imports: [
     CommonModule, FormsModule, ReactiveFormsModule,
     MatDialogModule, MatInputModule, MatSelectModule,
-    MatButtonModule, MatCheckboxModule, MatIconModule
+    MatButtonModule, MatCheckboxModule, MatIconModule, MatRadioModule
   ],
   template: `
     <h2 mat-dialog-title>{{ editing ? '编辑规则' : '新建规则' }}</h2>

@@ -1,13 +1,15 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, Inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatTreeModule } from '@angular/material/tree';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatDialog, MatDialogModule, MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { NestedTreeControl } from '@angular/cdk/tree';
 import { MatTreeNestedDataSource } from '@angular/material/tree';
 import { ApiService } from '../../services/api.service';
@@ -31,7 +33,8 @@ class FlatNode {
   imports: [
     CommonModule, FormsModule,
     MatTreeModule, MatIconModule, MatButtonModule,
-    MatDialogModule, MatInputModule, MatSelectModule, MatProgressBarModule
+    MatDialogModule, MatInputModule, MatSelectModule, MatProgressBarModule,
+    MatTooltipModule
   ],
   template: `
     <div class="page-header">
@@ -128,6 +131,7 @@ class FlatNode {
   `
 })
 export class QuotaHierarchyComponent implements OnInit {
+  Math = Math;
   treeControl = new NestedTreeControl<QuotaTreeNode>(node => node.children);
   dataSource = new MatTreeNestedDataSource<QuotaTreeNode>();
   levelStats: Array<{ label: string; count: number; over: number }> = [
@@ -203,8 +207,6 @@ export class QuotaHierarchyComponent implements OnInit {
   }
 }
 
-import { MAT_DIALOG_DATA } from '@angular/material/dialog';
-import { Inject, Component } from '@angular/core';
 
 @Component({
   selector: 'app-quota-edit-dialog',
@@ -251,7 +253,10 @@ export class QuotaEditDialogComponent {
     windowSeconds: 60
   };
 
-  constructor(@Inject(MAT_DIALOG_DATA) public data: any) {
+  constructor(
+    @Inject(MAT_DIALOG_DATA) public data: any,
+    private dialogRef: MatDialogRef<QuotaEditDialogComponent>
+  ) {
     this.form.limit = data.node.limit;
     this.form.windowSeconds = data.node.level === 'global' ? 60 :
       data.node.level === 'tenant' ? 60 :
@@ -259,6 +264,6 @@ export class QuotaEditDialogComponent {
   }
 
   onSubmit(): void {
-    (this as any).dialogRef.close(this.form);
+    this.dialogRef.close(this.form);
   }
 }

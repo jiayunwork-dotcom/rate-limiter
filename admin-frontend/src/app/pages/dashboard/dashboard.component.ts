@@ -2,6 +2,7 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../services/api.service';
 import { TrafficSeriesPoint, TenantShareData, HeatmapData } from '../../models/models';
 import { Chart, registerables } from 'chart.js';
@@ -13,7 +14,7 @@ Chart.register(...registerables);
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, MatCardModule, MatProgressBarModule, NgChartsModule],
+  imports: [CommonModule, MatCardModule, MatProgressBarModule, NgChartsModule, MatTooltipModule],
   template: `
     <div class="page-header">
       <h1 class="page-title">实时流量大盘</h1>

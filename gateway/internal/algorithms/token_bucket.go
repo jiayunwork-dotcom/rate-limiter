@@ -90,7 +90,7 @@ func (tb *TokenBucket) Allow(ctx context.Context, bucketKey string, req *models.
 		Allowed:    allowed,
 		Limit:      config.Capacity,
 		Remaining:  remaining,
-		ResetTime:  b.calcResetTime(resetSeconds),
+		ResetTime:  tb.calcResetTime(resetSeconds),
 		RetryAfter: retryAfter,
 		RuleID:     rule.ID,
 		Algorithm:  models.AlgorithmTokenBucket,

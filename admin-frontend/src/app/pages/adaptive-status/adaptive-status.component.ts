@@ -115,7 +115,7 @@ Chart.register(...registerables);
           </div>
           <div *ngIf="status?.stableSince" style="margin-top:16px;padding:12px;background:#e8f5e9;border-radius:6px;font-size:13px;color:#2e7d32;">
             <mat-icon style="vertical-align:middle;font-size:16px;">check_circle</mat-icon>
-            指标已稳定，自 {{ status.stableSince.slice(0, 19) }} 起逐步恢复配额
+            指标已稳定，自 {{ status!.stableSince!.slice(0, 19) }} 起逐步恢复配额
           </div>
         </div>
       </div>
@@ -231,7 +231,7 @@ export class AdaptiveStatusComponent implements OnInit, OnDestroy {
     plugins: { legend: { display: false } }
   };
 
-  errorChartOptions = {
+  errorChartOptions: any = {
     ...this.chartOptions,
     scales: {
       y: {
@@ -242,7 +242,7 @@ export class AdaptiveStatusComponent implements OnInit, OnDestroy {
     }
   };
 
-  coeffChartOptions = {
+  coeffChartOptions: any = {
     ...this.chartOptions,
     scales: {
       y: {

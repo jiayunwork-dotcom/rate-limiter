@@ -96,7 +96,7 @@ func (lb *LeakyBucket) Allow(ctx context.Context, bucketKey string, req *models.
 		Allowed:    allowed,
 		Limit:      state.capacity,
 		Remaining:  remaining,
-		ResetTime:  b.calcResetTime(resetSeconds),
+		ResetTime:  lb.calcResetTime(resetSeconds),
 		RetryAfter: retryAfter,
 		RuleID:     rule.ID,
 		Algorithm:  models.AlgorithmLeakyBucket,

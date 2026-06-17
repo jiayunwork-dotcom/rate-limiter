@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net"
 	"os"
@@ -12,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"gorm.io/driver/postgres"
