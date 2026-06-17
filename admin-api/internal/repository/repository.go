@@ -36,10 +36,7 @@ func NewRuleRepo(db *gorm.DB) *RuleRepo {
 }
 
 func (r *RuleRepo) List(page models.Pagination, search string, enabled *bool) (*models.PaginatedResult, error) {
-	query := r.db.Model(&models.RateLimitRule{}).
-		Select("id, name, api_path, method, algorithm, enabled, version, limit_count, window_seconds, " +
-			"dimensions, token_bucket_config, leaky_bucket_config, shaping_config, gray_release_config, config_json, " +
-			"created_at, updated_at")
+	query := r.db.Model(&models.RateLimitRule{})
 	if search != "" {
 		q := "%" + search + "%"
 		query = query.Where("name ILIKE ? OR api_path ILIKE ? OR id ILIKE ?", q, q, q)
@@ -76,12 +73,7 @@ func (r *RuleRepo) List(page models.Pagination, search string, enabled *bool) (*
 
 func (r *RuleRepo) Get(id string) (*models.RateLimitRule, error) {
 	var rule models.RateLimitRule
-	err := r.db.Model(&models.RateLimitRule{}).
-		Select("id, name, api_path, method, algorithm, enabled, version, limit_count, window_seconds, " +
-			"dimensions, token_bucket_config, leaky_bucket_config, shaping_config, gray_release_config, config_json, " +
-			"created_at, updated_at").
-		Where("id = ?", id).
-		First(&rule).Error
+	err := r.db.Where("id = ?", id).First(&rule).Error
 	if err != nil {
 		return nil, err
 	}
@@ -562,9 +554,7 @@ func NewTemplateRepo(db *gorm.DB) *TemplateRepo {
 }
 
 func (r *TemplateRepo) List(page models.Pagination, search string) (*models.PaginatedResult, error) {
-	query := r.db.Model(&models.RuleTemplate{}).
-		Select("id, name, description, algorithm, limit_count, window_seconds, " +
-			"token_bucket_config, leaky_bucket_config, shaping_config, created_at, updated_at")
+	query := r.db.Model(&models.RuleTemplate{})
 	if search != "" {
 		q := "%" + search + "%"
 		query = query.Where("name ILIKE ? OR description ILIKE ?", q, q)
@@ -599,8 +589,6 @@ func (r *TemplateRepo) List(page models.Pagination, search string) (*models.Pagi
 func (r *TemplateRepo) ListAll() ([]models.RuleTemplate, error) {
 	var templates []models.RuleTemplate
 	err := r.db.Model(&models.RuleTemplate{}).
-		Select("id, name, description, algorithm, limit_count, window_seconds, " +
-			"token_bucket_config, leaky_bucket_config, shaping_config, created_at, updated_at").
 		Order("name ASC").
 		Find(&templates).Error
 	if err != nil {
@@ -614,11 +602,7 @@ func (r *TemplateRepo) ListAll() ([]models.RuleTemplate, error) {
 
 func (r *TemplateRepo) Get(id string) (*models.RuleTemplate, error) {
 	var template models.RuleTemplate
-	err := r.db.Model(&models.RuleTemplate{}).
-		Select("id, name, description, algorithm, limit_count, window_seconds, " +
-			"token_bucket_config, leaky_bucket_config, shaping_config, created_at, updated_at").
-		Where("id = ?", id).
-		First(&template).Error
+	err := r.db.Where("id = ?", id).First(&template).Error
 	if err != nil {
 		return nil, err
 	}
