@@ -69,13 +69,15 @@ func main() {
 	quotaRepo := repository.NewQuotaRepo(db)
 	tenantRepo := repository.NewTenantRepo(db)
 	adaptiveRepo := repository.NewAdaptiveRepo(db)
+	templateRepo := repository.NewTemplateRepo(db)
 
 	ruleSvc := services.NewRuleService(ruleRepo, rdb)
 	eventSvc := services.NewEventService(eventRepo)
 	quotaSvc := services.NewQuotaService(quotaRepo, tenantRepo, eventRepo, rdb)
 	adaptiveSvc := services.NewAdaptiveService(adaptiveRepo, rdb)
+	templateSvc := services.NewTemplateService(templateRepo)
 
-	h := handlers.NewHandler(ruleSvc, eventSvc, quotaSvc, adaptiveSvc)
+	h := handlers.NewHandler(ruleSvc, eventSvc, quotaSvc, adaptiveSvc, templateSvc)
 
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
@@ -124,6 +126,16 @@ func main() {
 			adaptive.PUT("/config", h.UpdateAdaptiveConfig)
 			adaptive.POST("/override", h.OverrideAdaptiveCoeff)
 			adaptive.DELETE("/override", h.ClearAdaptiveOverride)
+		}
+
+		templates := api.Group("/templates")
+		{
+			templates.GET("", h.ListTemplates)
+			templates.GET("/all", h.ListAllTemplates)
+			templates.POST("", h.CreateTemplate)
+			templates.GET("/:id", h.GetTemplate)
+			templates.PUT("/:id", h.UpdateTemplate)
+			templates.DELETE("/:id", h.DeleteTemplate)
 		}
 	}
 

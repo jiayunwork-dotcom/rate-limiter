@@ -255,3 +255,24 @@ type AdaptiveStatus struct {
 	PIDKd                 float64   `json:"pid_kd"`
 	ManualOverrideCoeff   *float64  `json:"manual_override_coeff,omitempty"`
 }
+
+type RuleTemplate struct {
+	ID                string            `json:"id" gorm:"column:id;primaryKey"`
+	Name              string            `json:"name" gorm:"column:name"`
+	Description       string            `json:"description" gorm:"column:description"`
+	Algorithm         AlgorithmType     `json:"algorithm" gorm:"column:algorithm"`
+	Limit             int64             `json:"limit" gorm:"column:limit_count"`
+	WindowSeconds     int64             `json:"window_seconds" gorm:"column:window_seconds"`
+	TokenBucketJSON   *json.RawMessage  `json:"-" gorm:"column:token_bucket_config"`
+	LeakyBucketJSON   *json.RawMessage  `json:"-" gorm:"column:leaky_bucket_config"`
+	ShapingJSON       *json.RawMessage  `json:"-" gorm:"column:shaping_config"`
+	TokenBucketConfig *TokenBucketConfig `json:"token_bucket_config,omitempty" gorm:"-"`
+	LeakyBucketConfig *LeakyBucketConfig `json:"leaky_bucket_config,omitempty" gorm:"-"`
+	ShapingConfig     *ShapingConfig     `json:"shaping_config,omitempty" gorm:"-"`
+	CreatedAt         time.Time         `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt         time.Time         `json:"updated_at" gorm:"column:updated_at"`
+}
+
+func (RuleTemplate) TableName() string {
+	return "rule_templates"
+}

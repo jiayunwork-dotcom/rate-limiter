@@ -12,8 +12,9 @@ import { MatPaginatorModule } from '@angular/material/paginator';
 import { MatSortModule } from '@angular/material/sort';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatListModule } from '@angular/material/list';
 import { ApiService } from '../../services/api.service';
-import { RuleConfig, AlgorithmType, Dimension, DimensionType } from '../../models/models';
+import { RuleConfig, AlgorithmType, Dimension, DimensionType, RuleTemplate } from '../../models/models';
 
 @Component({
   selector: 'app-rules',
@@ -22,7 +23,8 @@ import { RuleConfig, AlgorithmType, Dimension, DimensionType } from '../../model
     CommonModule, FormsModule, ReactiveFormsModule,
     MatTableModule, MatButtonModule, MatInputModule, MatSelectModule,
     MatCheckboxModule, MatDialogModule, MatSlideToggleModule,
-    MatPaginatorModule, MatSortModule, MatIconModule, MatTooltipModule
+    MatPaginatorModule, MatSortModule, MatIconModule, MatTooltipModule,
+    MatListModule
   ],
   template: `
     <div class="page-header">
@@ -141,6 +143,7 @@ import { RuleConfig, AlgorithmType, Dimension, DimensionType } from '../../model
 export class RulesComponent implements OnInit {
   rules: RuleConfig[] = [];
   filteredRules: RuleConfig[] = [];
+  templates: RuleTemplate[] = [];
   searchText = '';
   filterEnabled: boolean | null = null;
   selectedIds: string[] = [];
@@ -171,12 +174,19 @@ export class RulesComponent implements OnInit {
 
   ngOnInit(): void {
     this.loadRules();
+    this.loadTemplates();
   }
 
   private loadRules(): void {
     this.api.listRules().subscribe(rules => {
       this.rules = rules;
       this.applyFilter();
+    });
+  }
+
+  private loadTemplates(): void {
+    this.api.listAllTemplates().subscribe(templates => {
+      this.templates = templates;
     });
   }
 
@@ -239,10 +249,10 @@ export class RulesComponent implements OnInit {
     });
   }
 
-  openRuleDialog(rule?: RuleConfig): void {
+  openRuleDialog(rule?: RuleConfig, template?: RuleTemplate): void {
     const dialogRef = this.dialog.open(RuleFormDialogComponent, {
       width: '720px',
-      data: { rule, fb: this.fb, dimTypes: this.dimensionTypes, algoOpts: this.algorithmOptions }
+      data: { rule, template, templates: this.templates, fb: this.fb, dimTypes: this.dimensionTypes, algoOpts: this.algorithmOptions }
     });
     dialogRef.afterClosed().subscribe(result => {
       if (result) {
@@ -263,10 +273,21 @@ import { Inject } from '@angular/core';
   imports: [
     CommonModule, FormsModule, ReactiveFormsModule,
     MatDialogModule, MatInputModule, MatSelectModule,
-    MatButtonModule, MatCheckboxModule, MatIconModule, MatRadioModule
+    MatButtonModule, MatCheckboxModule, MatIconModule, MatRadioModule,
+    MatListModule
   ],
   template: `
-    <h2 mat-dialog-title>{{ editing ? '编辑规则' : '新建规则' }}</h2>
+    <h2 mat-dialog-title>
+      {{ editing ? '编辑规则' : '新建规则' }}
+      <button *ngIf="!editing" mat-button color="primary" style="margin-left:16px;font-size:14px;" (click)="openTemplateSelector()">
+        <mat-icon>category</mat-icon>从模板创建
+      </button>
+    </h2>
+    <div *ngIf="selectedTemplate" class="template-info">
+      <mat-icon style="vertical-align:middle;color:#1976d2;">check_circle</mat-icon>
+      <span>已使用模板: <strong>{{ selectedTemplate.name }}</strong></span>
+      <button mat-button color="warn" style="margin-left:auto;" (click)="clearTemplate()">清除</button>
+    </div>
     <form [formGroup]="form" mat-dialog-content style="display:flex;flex-direction:column;gap:16px;">
       <div class="form-row">
         <mat-form-field appearance="outline" class="form-field">
@@ -375,19 +396,56 @@ import { Inject } from '@angular/core';
       <button mat-button mat-dialog-close>取消</button>
       <button mat-raised-button color="primary" [disabled]="form.invalid" (click)="onSubmit()">保存</button>
     </div>
-  `
+  `,
+  styles: [`
+    .template-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: #e8f5e9;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+    .form-row {
+      display: flex;
+      gap: 16px;
+    }
+    .form-field {
+      flex: 1;
+      min-width: 0;
+    }
+    .card {
+      background: #fafafa;
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+    }
+    .card-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e0e0e0;
+      font-weight: 500;
+    }
+    .card-content {
+      padding: 16px;
+    }
+  `]
 })
 export class RuleFormDialogComponent {
   form: FormGroup;
   combineMode: 'AND' | 'OR' = 'OR';
   editing: boolean;
+  selectedTemplate: RuleTemplate | null = null;
+  showTemplateSelector = false;
 
   constructor(
     public dialogRef: MatDialogRef<RuleFormDialogComponent>,
-    @Inject(MAT_DIALOG_DATA) public data: any
+    @Inject(MAT_DIALOG_DATA) public data: any,
+    private dialog: MatDialog
   ) {
     this.editing = !!data.rule;
-    const r = data.rule || {};
+    const r = data.rule || data.template || {};
+    this.selectedTemplate = data.template || null;
     this.combineMode = r.dimensions?.combineMode || 'OR';
     const dims = r.dimensions?.dimensions?.map((d: Dimension) => d.type) || ['tenant_id'];
 
@@ -414,6 +472,50 @@ export class RuleFormDialogComponent {
     });
   }
 
+  openTemplateSelector(): void {
+    const dialogRef = this.dialog.open(TemplateSelectorDialogComponent, {
+      width: '560px',
+      data: { templates: this.data.templates }
+    });
+    dialogRef.afterClosed().subscribe((template: RuleTemplate) => {
+      if (template) {
+        this.applyTemplate(template);
+      }
+    });
+  }
+
+  applyTemplate(template: RuleTemplate): void {
+    this.selectedTemplate = template;
+    this.form.patchValue({
+      algorithm: template.algorithm,
+      limit: template.limit,
+      windowSeconds: template.windowSeconds
+    });
+    if (template.tokenBucketConfig) {
+      this.form.patchValue({
+        tokenBucketConfig: {
+          refillRate: template.tokenBucketConfig.refillRate,
+          capacity: template.tokenBucketConfig.capacity,
+          tokensPerReq: template.tokenBucketConfig.tokensPerReq
+        }
+      });
+    }
+    if (template.shapingConfig) {
+      this.form.patchValue({
+        shapingConfig: {
+          enabled: template.shapingConfig.enabled,
+          maxQueueDepth: template.shapingConfig.maxQueueDepth,
+          maxWaitMs: template.shapingConfig.maxWaitMs,
+          priorityEnabled: template.shapingConfig.priorityEnabled
+        }
+      });
+    }
+  }
+
+  clearTemplate(): void {
+    this.selectedTemplate = null;
+  }
+
   get dimsArr(): FormArray {
     return this.form.get('dimensions') as FormArray;
   }
@@ -430,5 +532,109 @@ export class RuleFormDialogComponent {
     };
     if (val.algorithm !== 'token_bucket') delete val.tokenBucketConfig;
     this.dialogRef.close(val);
+  }
+}
+
+@Component({
+  selector: 'app-template-selector-dialog',
+  standalone: true,
+  imports: [
+    CommonModule, FormsModule,
+    MatDialogModule, MatButtonModule, MatIconModule,
+    MatListModule, MatInputModule
+  ],
+  template: `
+    <h2 mat-dialog-title>选择模板</h2>
+    <mat-dialog-content style="min-height: 400px;">
+      <mat-form-field appearance="outline" style="width: 100%;">
+        <mat-label>搜索模板</mat-label>
+        <input matInput [(ngModel)]="searchText" placeholder="输入模板名称搜索">
+        <mat-icon matSuffix>search</mat-icon>
+      </mat-form-field>
+      <mat-list style="padding: 0;">
+        <mat-list-item 
+          *ngFor="let t of filteredTemplates" 
+          class="template-item"
+          (click)="selectTemplate(t)"
+        >
+          <div matListItemTitle style="font-weight: 500;">{{ t.name }}</div>
+          <div matListItemLine style="font-size: 12px; color: #666; margin-top: 4px;">
+            {{ t.description }}
+          </div>
+          <div matListItemMeta style="text-align: right;">
+            <span class="tag tag-blue">{{ getAlgorithmLabel(t.algorithm) }}</span>
+            <div style="font-size: 12px; color: #666; margin-top: 4px;">
+              {{ t.limit }} 次 / {{ t.windowSeconds }}s
+            </div>
+          </div>
+          <mat-icon matListItemIcon style="color: #1976d2;">description</mat-icon>
+        </mat-list-item>
+        <div *ngIf="!filteredTemplates.length" style="text-align:center;padding:48px;color:#999;">
+          暂无匹配的模板
+        </div>
+      </mat-list>
+    </mat-dialog-content>
+    <mat-dialog-actions style="justify-content: flex-end;">
+      <button mat-button mat-dialog-close>取消</button>
+    </mat-dialog-actions>
+  `,
+  styles: [`
+    .template-item {
+      cursor: pointer;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      transition: background-color 0.2s;
+    }
+    .template-item:hover {
+      background-color: #f5f5f5;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .tag-blue {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+  `]
+})
+export class TemplateSelectorDialogComponent {
+  searchText = '';
+  templates: RuleTemplate[] = [];
+
+  algorithmOptions: { value: AlgorithmType; label: string }[] = [
+    { value: 'token_bucket', label: '令牌桶' },
+    { value: 'leaky_bucket', label: '漏桶' },
+    { value: 'fixed_window', label: '固定窗口' },
+    { value: 'sliding_window', label: '滑动窗口' },
+    { value: 'sliding_log', label: '滑动日志' }
+  ];
+
+  constructor(
+    public dialogRef: MatDialogRef<TemplateSelectorDialogComponent>,
+    @Inject(MAT_DIALOG_DATA) public data: any
+  ) {
+    this.templates = data.templates || [];
+  }
+
+  get filteredTemplates(): RuleTemplate[] {
+    if (!this.searchText) return this.templates;
+    const search = this.searchText.toLowerCase();
+    return this.templates.filter(t =>
+      t.name.toLowerCase().includes(search) ||
+      t.description.toLowerCase().includes(search)
+    );
+  }
+
+  getAlgorithmLabel(algo: AlgorithmType): string {
+    const opt = this.algorithmOptions.find(a => a.value === algo);
+    return opt?.label || algo;
+  }
+
+  selectTemplate(template: RuleTemplate): void {
+    this.dialogRef.close(template);
   }
 }

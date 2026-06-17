@@ -41,6 +41,10 @@ import { MatIconModule } from '@angular/material/icon';
             <mat-icon matListItemIcon>rule</mat-icon>
             <span matListItemTitle>规则管理</span>
           </a>
+          <a mat-list-item routerLink="/rule-templates" routerLinkActive="active">
+            <mat-icon matListItemIcon>category</mat-icon>
+            <span matListItemTitle>规则模板</span>
+          </a>
           <a mat-list-item routerLink="/quota-hierarchy" routerLinkActive="active">
             <mat-icon matListItemIcon>account_tree</mat-icon>
             <span matListItemTitle>配额层级</span>

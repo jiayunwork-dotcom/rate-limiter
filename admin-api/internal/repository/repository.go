@@ -538,3 +538,137 @@ func (a *AdaptiveRepo) Update(cfg *models.AdaptiveConfigDB) error {
 		}),
 	}).Create(cfg).Error
 }
+
+type TemplateRepo struct {
+	db *gorm.DB
+}
+
+func NewTemplateRepo(db *gorm.DB) *TemplateRepo {
+	return &TemplateRepo{db: db}
+}
+
+func (r *TemplateRepo) List(page models.Pagination, search string) (*models.PaginatedResult, error) {
+	query := r.db.Model(&models.RuleTemplate{}).
+		Select("id, name, description, algorithm, limit_count, window_seconds, " +
+			"token_bucket_config, leaky_bucket_config, shaping_config, created_at, updated_at")
+	if search != "" {
+		q := "%" + search + "%"
+		query = query.Where("name ILIKE ? OR description ILIKE ?", q, q)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var templates []models.RuleTemplate
+	err := query.Order("updated_at DESC").
+		Offset(page.GetOffset()).
+		Limit(page.GetPageSize()).
+		Find(&templates).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range templates {
+		unmarshalTemplateFields(&templates[i])
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.GetPageSize(),
+		Data:     templates,
+	}, nil
+}
+
+func (r *TemplateRepo) ListAll() ([]models.RuleTemplate, error) {
+	var templates []models.RuleTemplate
+	err := r.db.Model(&models.RuleTemplate{}).
+		Select("id, name, description, algorithm, limit_count, window_seconds, " +
+			"token_bucket_config, leaky_bucket_config, shaping_config, created_at, updated_at").
+		Order("name ASC").
+		Find(&templates).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range templates {
+		unmarshalTemplateFields(&templates[i])
+	}
+	return templates, nil
+}
+
+func (r *TemplateRepo) Get(id string) (*models.RuleTemplate, error) {
+	var template models.RuleTemplate
+	err := r.db.Model(&models.RuleTemplate{}).
+		Select("id, name, description, algorithm, limit_count, window_seconds, " +
+			"token_bucket_config, leaky_bucket_config, shaping_config, created_at, updated_at").
+		Where("id = ?", id).
+		First(&template).Error
+	if err != nil {
+		return nil, err
+	}
+	unmarshalTemplateFields(&template)
+	return &template, nil
+}
+
+func (r *TemplateRepo) Create(template *models.RuleTemplate) error {
+	template.CreatedAt = time.Now()
+	template.UpdatedAt = time.Now()
+	marshalTemplateFields(template)
+	return r.db.Create(template).Error
+}
+
+func (r *TemplateRepo) Update(template *models.RuleTemplate) error {
+	existing, err := r.Get(template.ID)
+	if err != nil {
+		return err
+	}
+	template.CreatedAt = existing.CreatedAt
+	template.UpdatedAt = time.Now()
+	marshalTemplateFields(template)
+	return r.db.Save(template).Error
+}
+
+func (r *TemplateRepo) Delete(id string) error {
+	return r.db.Delete(&models.RuleTemplate{}, "id = ?", id).Error
+}
+
+func marshalTemplateFields(template *models.RuleTemplate) {
+	if template.TokenBucketConfig != nil {
+		data, _ := json.Marshal(template.TokenBucketConfig)
+		raw := json.RawMessage(data)
+		template.TokenBucketJSON = &raw
+	}
+	if template.LeakyBucketConfig != nil {
+		data, _ := json.Marshal(template.LeakyBucketConfig)
+		raw := json.RawMessage(data)
+		template.LeakyBucketJSON = &raw
+	}
+	if template.ShapingConfig != nil {
+		data, _ := json.Marshal(template.ShapingConfig)
+		raw := json.RawMessage(data)
+		template.ShapingJSON = &raw
+	}
+}
+
+func unmarshalTemplateFields(template *models.RuleTemplate) {
+	if template.TokenBucketJSON != nil && len(*template.TokenBucketJSON) > 0 {
+		var cfg models.TokenBucketConfig
+		if json.Unmarshal(*template.TokenBucketJSON, &cfg) == nil {
+			template.TokenBucketConfig = &cfg
+		}
+	}
+	if template.LeakyBucketJSON != nil && len(*template.LeakyBucketJSON) > 0 {
+		var cfg models.LeakyBucketConfig
+		if json.Unmarshal(*template.LeakyBucketJSON, &cfg) == nil {
+			template.LeakyBucketConfig = &cfg
+		}
+	}
+	if template.ShapingJSON != nil && len(*template.ShapingJSON) > 0 {
+		var cfg models.ShapingConfig
+		if json.Unmarshal(*template.ShapingJSON, &cfg) == nil {
+			template.ShapingConfig = &cfg
+		}
+	}
+}

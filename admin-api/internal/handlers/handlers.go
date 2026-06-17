@@ -17,6 +17,7 @@ type Handler struct {
 	events    *services.EventService
 	quotas    *services.QuotaService
 	adaptive  *services.AdaptiveService
+	templates *services.TemplateService
 }
 
 func NewHandler(
@@ -24,12 +25,14 @@ func NewHandler(
 	events *services.EventService,
 	quotas *services.QuotaService,
 	adaptive *services.AdaptiveService,
+	templates *services.TemplateService,
 ) *Handler {
 	return &Handler{
-		rules:    rules,
-		events:   events,
-		quotas:   quotas,
-		adaptive: adaptive,
+		rules:     rules,
+		events:    events,
+		quotas:    quotas,
+		adaptive:  adaptive,
+		templates: templates,
 	}
 }
 
@@ -232,6 +235,7 @@ func (h *Handler) GetTrafficSeries(c *gin.Context) {
 		points = []models.TrafficPoint{}
 	}
 	c.JSON(http.StatusOK, points)
+}
 
 func (h *Handler) GetTenantShare(c *gin.Context) {
 	lastHours := 24
@@ -363,6 +367,93 @@ func (h *Handler) Health(c *gin.Context) {
 		"service":   "admin-api",
 		"timestamp": time.Now().UTC(),
 	})
+}
+
+func (h *Handler) ListTemplates(c *gin.Context) {
+	var page models.Pagination
+	if err := c.ShouldBindQuery(&page); err != nil {
+		page.Page = 1
+		page.PageSize = 20
+	}
+	if page.Page <= 0 {
+		page.Page = 1
+	}
+	if page.PageSize <= 0 {
+		page.PageSize = 20
+	}
+	search := c.Query("search")
+	result, err := h.templates.List(page, search)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list templates",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) ListAllTemplates(c *gin.Context) {
+	templates, err := h.templates.ListAll()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list templates",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, templates)
+}
+
+func (h *Handler) GetTemplate(c *gin.Context) {
+	id := c.Param("id")
+	template, err := h.templates.Get(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "template not found"})
+		return
+	}
+	c.JSON(http.StatusOK, template)
+}
+
+func (h *Handler) CreateTemplate(c *gin.Context) {
+	var template models.RuleTemplate
+	if err := c.ShouldBindJSON(&template); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if template.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "template name is required"})
+		return
+	}
+	if err := h.templates.Create(&template); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, template)
+}
+
+func (h *Handler) UpdateTemplate(c *gin.Context) {
+	id := c.Param("id")
+	var template models.RuleTemplate
+	if err := c.ShouldBindJSON(&template); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	template.ID = id
+	if err := h.templates.Update(&template); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, template)
+}
+
+func (h *Handler) DeleteTemplate(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.templates.Delete(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func CORSMiddleware() gin.HandlerFunc {

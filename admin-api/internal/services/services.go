@@ -438,3 +438,35 @@ func (s *AdaptiveService) ClearOverride(component string) error {
 	cfg.ManualOverrideCoeff = nil
 	return s.adaptiveRepo.Update(cfg)
 }
+
+type TemplateService struct {
+	templateRepo *repository.TemplateRepo
+}
+
+func NewTemplateService(templateRepo *repository.TemplateRepo) *TemplateService {
+	return &TemplateService{templateRepo: templateRepo}
+}
+
+func (s *TemplateService) List(page models.Pagination, search string) (*models.PaginatedResult, error) {
+	return s.templateRepo.List(page, search)
+}
+
+func (s *TemplateService) ListAll() ([]models.RuleTemplate, error) {
+	return s.templateRepo.ListAll()
+}
+
+func (s *TemplateService) Get(id string) (*models.RuleTemplate, error) {
+	return s.templateRepo.Get(id)
+}
+
+func (s *TemplateService) Create(template *models.RuleTemplate) error {
+	return s.templateRepo.Create(template)
+}
+
+func (s *TemplateService) Update(template *models.RuleTemplate) error {
+	return s.templateRepo.Update(template)
+}
+
+func (s *TemplateService) Delete(id string) error {
+	return s.templateRepo.Delete(id)
+}

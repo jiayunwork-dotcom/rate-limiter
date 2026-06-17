@@ -162,6 +162,27 @@ CREATE TRIGGER trg_update_adaptive_configs_timestamp
 BEFORE UPDATE ON adaptive_configs
 FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
 
+CREATE TABLE IF NOT EXISTS rule_templates (
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::VARCHAR,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    algorithm VARCHAR(32) NOT NULL DEFAULT 'token_bucket',
+    limit_count BIGINT NOT NULL DEFAULT 100,
+    window_seconds BIGINT NOT NULL DEFAULT 60,
+    token_bucket_config JSONB,
+    leaky_bucket_config JSONB,
+    shaping_config JSONB,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_rule_templates_algorithm ON rule_templates(algorithm);
+CREATE INDEX idx_rule_templates_name ON rule_templates(name);
+
+CREATE TRIGGER trg_update_rule_templates_timestamp
+BEFORE UPDATE ON rule_templates
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
 INSERT INTO tenants (id, name, description) VALUES
 ('tenant-demo-1', 'Demo Tenant 1', 'First demo tenant for testing'),
 ('tenant-demo-2', 'Demo Tenant 2', 'Second demo tenant for testing')
@@ -199,3 +220,42 @@ INSERT INTO rate_limit_rules (id, name, api_path, method, algorithm, limit_count
     '{"enabled": true, "max_queue_depth": 200, "max_wait_ms": 3000, "priority_enabled": true}'
 )
 ON CONFLICT DO NOTHING;
+
+INSERT INTO rule_templates (name, description, algorithm, limit_count, window_seconds, token_bucket_config, shaping_config) VALUES
+(
+    '标准API限流模板',
+    '适用于普通API接口的限流配置，使用令牌桶算法，支持突发流量',
+    'token_bucket',
+    1000,
+    60,
+    '{"refill_rate": 16, "capacity": 1000, "tokens_per_req": 1}',
+    '{"enabled": true, "max_queue_depth": 100, "max_wait_ms": 2000, "priority_enabled": false}'
+),
+(
+    '登录接口防护模板',
+    '针对登录接口的严格限流配置，防止暴力破解，使用滑动窗口算法',
+    'sliding_window',
+    5,
+    60,
+    NULL,
+    '{"enabled": true, "max_queue_depth": 10, "max_wait_ms": 5000, "priority_enabled": false}'
+),
+(
+    '高并发读接口模板',
+    '适用于高并发读接口，较大的限流阈值，支持优先级排队',
+    'token_bucket',
+    10000,
+    60,
+    '{"refill_rate": 167, "capacity": 10000, "tokens_per_req": 1}',
+    '{"enabled": true, "max_queue_depth": 500, "max_wait_ms": 3000, "priority_enabled": true}'
+),
+(
+    '严格写操作模板',
+    '针对写入/修改操作的严格限流，固定窗口算法，直接拒绝无队列',
+    'fixed_window',
+    100,
+    60,
+    NULL,
+    '{"enabled": false, "max_queue_depth": 0, "max_wait_ms": 0, "priority_enabled": false}'
+)
+ON CONFLICT (name) DO NOTHING;

@@ -168,3 +168,17 @@ export interface AdaptiveConfigUpdate {
   ki: number;
   kd: number;
 }
+
+export interface RuleTemplate {
+  id: string;
+  name: string;
+  description: string;
+  algorithm: AlgorithmType;
+  limit: number;
+  windowSeconds: number;
+  tokenBucketConfig?: TokenBucketConfig;
+  leakyBucketConfig?: LeakyBucketConfig;
+  shapingConfig?: ShapingConfig;
+  createdAt: string;
+  updatedAt: string;
+}

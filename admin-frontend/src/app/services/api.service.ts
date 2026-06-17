@@ -3,7 +3,8 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import {
   RuleConfig, RuleVersion, QuotaConfig, QuotaTreeNode, RateLimitEvent,
-  TrafficSeriesPoint, TenantShareData, HeatmapData, AdaptiveStatus, AdaptiveConfigUpdate
+  TrafficSeriesPoint, TenantShareData, HeatmapData, AdaptiveStatus, AdaptiveConfigUpdate,
+  RuleTemplate
 } from '../models/models';
 
 @Injectable({ providedIn: 'root' })
@@ -118,5 +119,31 @@ export class ApiService {
 
   clearAdaptiveOverride(): Observable<any> {
     return this.http.delete(`${this.baseUrl}/adaptive/override`);
+  }
+
+  listTemplates(search?: string): Observable<{ total: number; data: RuleTemplate[] }> {
+    let params = new HttpParams();
+    if (search) params = params.set('search', search);
+    return this.http.get<{ total: number; data: RuleTemplate[] }>(`${this.baseUrl}/templates`, { params });
+  }
+
+  listAllTemplates(): Observable<RuleTemplate[]> {
+    return this.http.get<RuleTemplate[]>(`${this.baseUrl}/templates/all`);
+  }
+
+  getTemplate(id: string): Observable<RuleTemplate> {
+    return this.http.get<RuleTemplate>(`${this.baseUrl}/templates/${id}`);
+  }
+
+  createTemplate(template: Partial<RuleTemplate>): Observable<RuleTemplate> {
+    return this.http.post<RuleTemplate>(`${this.baseUrl}/templates`, template);
+  }
+
+  updateTemplate(id: string, template: Partial<RuleTemplate>): Observable<RuleTemplate> {
+    return this.http.put<RuleTemplate>(`${this.baseUrl}/templates/${id}`, template);
+  }
+
+  deleteTemplate(id: string): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/templates/${id}`);
   }
 }
