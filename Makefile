@@ -93,10 +93,12 @@ docker-up:
 	docker compose up -d --build
 	@echo ""
 	@echo "  ✓ 服务启动完成:"
-	@echo "    - 前端管理界面: http://localhost"
+	@echo "    - 前端管理界面: http://localhost:8090"
 	@echo "    - 管理API:      http://localhost:8081/api/v1/health"
 	@echo "    - 网关HTTP:     http://localhost:8080"
 	@echo "    - 网关gRPC:     localhost:9090"
+	@echo "    - 网关指标:     http://localhost:8080/metrics (限流自定义指标)"
+	@echo "    - 管理指标:     http://localhost:8090/metrics/admin"
 	@echo "    - PostgreSQL:   localhost:5432"
 	@echo "    - Redis:        localhost:6379"
 	@echo ""

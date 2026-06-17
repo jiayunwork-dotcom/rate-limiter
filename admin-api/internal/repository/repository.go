@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -280,43 +281,49 @@ func (e *EventRepo) List(
 }
 
 func (e *EventRepo) TrafficSeries(startTime, endTime time.Time, intervalSec int, apiPath, tenantID string) ([]models.TrafficPoint, error) {
-	dbType := e.db.Dialector.Name()
-	var timeTruncExpr string
-	switch dbType {
-	case "postgres":
-		timeTruncExpr = fmt.Sprintf("date_trunc('second', timestamp) - (MOD(EXTRACT(SECOND FROM timestamp)::int, %d) || ' seconds')::interval", intervalSec)
-	default:
-		timeTruncExpr = "timestamp"
+	if intervalSec <= 0 {
+		intervalSec = 60
 	}
 
-	rows, err := e.db.Model(&models.RateLimitEvent{}).
-		Select(fmt.Sprintf(`%s as bucket_ts,
-			COUNT(*) FILTER (WHERE allowed = true) as allowed,
-			COUNT(*) FILTER (WHERE allowed = false) as rejected`, timeTruncExpr)).
-		Where("timestamp >= ? AND timestamp <= ?", startTime, endTime).
-		Where(func(db *gorm.DB) *gorm.DB {
-			q := db
-			if apiPath != "" {
-				q = q.Where("api_path = ?", apiPath)
-			}
-			if tenantID != "" {
-				q = q.Where("tenant_id = ?", tenantID)
-			}
-			return q
-		}).
-		Group("bucket_ts").
-		Order("bucket_ts ASC").
-		Rows()
+	whereClauses := []string{"timestamp >= ?", "timestamp <= ?"}
+	args := []interface{}{startTime, endTime}
+	if apiPath != "" {
+		whereClauses = append(whereClauses, "api_path = ?")
+		args = append(args, apiPath)
+	}
+	if tenantID != "" {
+		whereClauses = append(whereClauses, "tenant_id = ?")
+		args = append(args, tenantID)
+	}
+	whereSQL := strings.Join(whereClauses, " AND ")
+
+	sql := fmt.Sprintf(`
+		SELECT
+			to_timestamp(floor(extract(epoch FROM timestamp) / %d) * %d) AS bucket_ts,
+			COUNT(*) FILTER (WHERE allowed = true) AS allowed,
+			COUNT(*) FILTER (WHERE allowed = false) AS rejected
+		FROM rate_limit_events
+		WHERE %s
+		GROUP BY bucket_ts
+		ORDER BY bucket_ts ASC
+	`, intervalSec, intervalSec, whereSQL)
+
+	rows, err := e.db.Raw(sql, args...).Rows()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("traffic series query failed: %w", err)
 	}
 	defer rows.Close()
 
 	points := make([]models.TrafficPoint, 0)
 	for rows.Next() {
-		var ts time.Time
-		var allowed, rejected int64
-		rows.Scan(&ts, &allowed, &rejected)
+		var (
+			ts       time.Time
+			allowed  int64
+			rejected int64
+		)
+		if err := rows.Scan(&ts, &allowed, &rejected); err != nil {
+			return nil, fmt.Errorf("traffic series scan failed: %w", err)
+		}
 		total := allowed + rejected
 		ratio := 0.0
 		if total > 0 {
@@ -330,20 +337,26 @@ func (e *EventRepo) TrafficSeries(startTime, endTime time.Time, intervalSec int,
 			RejectRatio: ratio,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return points, nil
 }
 
 func (e *EventRepo) TenantTrafficShare(startTime, endTime time.Time) ([]models.TenantTrafficShare, error) {
-	rows, err := e.db.Model(&models.RateLimitEvent{}).
-		Select(`COALESCE(tenant_id, 'unknown') as tenant_id,
-			COUNT(*) as cnt`).
-		Where("timestamp >= ? AND timestamp <= ?", startTime, endTime).
-		Group("tenant_id").
-		Order("cnt DESC").
-		Limit(20).
-		Rows()
+	sql := `
+		SELECT
+			COALESCE(tenant_id, 'unknown') AS tenant_id,
+			COUNT(*) AS cnt
+		FROM rate_limit_events
+		WHERE timestamp >= ? AND timestamp <= ?
+		GROUP BY COALESCE(tenant_id, 'unknown')
+		ORDER BY cnt DESC
+		LIMIT 20
+	`
+	rows, err := e.db.Raw(sql, startTime, endTime).Rows()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("tenant traffic share query failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -355,9 +368,14 @@ func (e *EventRepo) TenantTrafficShare(startTime, endTime time.Time) ([]models.T
 	var total int64
 	for rows.Next() {
 		var r raw
-		rows.Scan(&r.TenantID, &r.Count)
+		if err := rows.Scan(&r.TenantID, &r.Count); err != nil {
+			return nil, fmt.Errorf("tenant share scan failed: %w", err)
+		}
 		rawData = append(rawData, r)
 		total += r.Count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	result := make([]models.TenantTrafficShare, 0, len(rawData))
@@ -381,24 +399,42 @@ func (e *EventRepo) TenantTrafficShare(startTime, endTime time.Time) ([]models.T
 }
 
 func (e *EventRepo) Heatmap(startTime, endTime time.Time) ([]models.HeatmapPoint, error) {
-	rows, err := e.db.Model(&models.RateLimitEvent{}).
-		Select(`EXTRACT(HOUR FROM timestamp)::int as h,
-			EXTRACT(MINUTE FROM timestamp)::int / 5 * 5 as m,
-			EXTRACT(ISODOW FROM timestamp)::int as dow,
-			COUNT(*) as cnt`).
-		Where("timestamp >= ? AND timestamp <= ?", startTime, endTime).
-		Group("h, m, dow").
-		Rows()
+	sql := `
+		SELECT
+			CAST(EXTRACT(HOUR FROM timestamp) AS INTEGER) AS h,
+			CAST(EXTRACT(MINUTE FROM timestamp) AS INTEGER) / 5 * 5 AS m,
+			CAST(EXTRACT(ISODOW FROM timestamp) AS INTEGER) AS dow,
+			COUNT(*) AS cnt
+		FROM rate_limit_events
+		WHERE timestamp >= ? AND timestamp <= ?
+		GROUP BY 1, 2, 3
+	`
+	rows, err := e.db.Raw(sql, startTime, endTime).Rows()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("heatmap query failed: %w", err)
 	}
 	defer rows.Close()
 
 	points := make([]models.HeatmapPoint, 0)
 	for rows.Next() {
-		var p models.HeatmapPoint
-		rows.Scan(&p.Hour, &p.Minute, &p.DayOfWeek, &p.Count)
-		points = append(points, p)
+		var (
+			hour      int
+			minute    int
+			dayOfWeek int
+			count     int64
+		)
+		if err := rows.Scan(&hour, &minute, &dayOfWeek, &count); err != nil {
+			return nil, fmt.Errorf("heatmap scan failed: %w", err)
+		}
+		points = append(points, models.HeatmapPoint{
+			Hour:      hour,
+			Minute:    minute,
+			DayOfWeek: dayOfWeek,
+			Count:     count,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return points, nil
 }

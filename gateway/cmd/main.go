@@ -89,6 +89,7 @@ func main() {
 	adaptiveMgr := adaptive.NewAdaptiveManager(adaptiveCfg)
 
 	collector := metrics.NewCollector("ratelimiter")
+	collector.Initialize(nodeID)
 
 	eventFlushCb := func(events []*models.RateLimitEvent) error {
 		if db == nil {

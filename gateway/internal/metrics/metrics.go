@@ -148,3 +148,10 @@ func (c *Collector) RecordRuleMatch(ruleID string, enabled bool) {
 	}
 	c.RuleMatchTotal.WithLabelValues(ruleID, enabledStr).Inc()
 }
+
+func (c *Collector) Initialize(nodeID string) {
+	c.SetMode(nodeID, true)
+	c.SetAdaptiveCoeff("global", 1.0)
+	c.SetQuotaUsage("global", "global", 0)
+	c.RequestTotal.WithLabelValues("", "", "", "", "200")
+}

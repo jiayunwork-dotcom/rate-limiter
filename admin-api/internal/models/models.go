@@ -60,11 +60,11 @@ type RateLimitRule struct {
 	ShapingJSON       *json.RawMessage  `json:"-" gorm:"column:shaping_config"`
 	GrayReleaseJSON   *json.RawMessage  `json:"-" gorm:"column:gray_release_config"`
 	ConfigJSON        json.RawMessage   `json:"-" gorm:"column:config_json"`
-	Dimensions        *RuleDimensions     `json:"dimensions"`
-	TokenBucketConfig *TokenBucketConfig  `json:"token_bucket_config,omitempty"`
-	LeakyBucketConfig *LeakyBucketConfig  `json:"leaky_bucket_config,omitempty"`
-	ShapingConfig     *ShapingConfig      `json:"shaping_config,omitempty"`
-	GrayReleaseConfig *GrayReleaseConfig  `json:"gray_release_config,omitempty"`
+	Dimensions        *RuleDimensions     `json:"dimensions" gorm:"-"`
+	TokenBucketConfig *TokenBucketConfig  `json:"token_bucket_config,omitempty" gorm:"-"`
+	LeakyBucketConfig *LeakyBucketConfig  `json:"leaky_bucket_config,omitempty" gorm:"-"`
+	ShapingConfig     *ShapingConfig      `json:"shaping_config,omitempty" gorm:"-"`
+	GrayReleaseConfig *GrayReleaseConfig  `json:"gray_release_config,omitempty" gorm:"-"`
 	CreatedAt         time.Time         `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt         time.Time         `json:"updated_at" gorm:"column:updated_at"`
 }
