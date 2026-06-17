@@ -5,7 +5,7 @@
     "changeOrigin": true
   },
   "/metrics": {
-    "target": "http://localhost:8080",
+    "target": "http://localhost:8180",
     "secure": false,
     "changeOrigin": true
   },

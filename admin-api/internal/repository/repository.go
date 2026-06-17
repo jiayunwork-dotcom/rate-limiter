@@ -22,7 +22,10 @@ func NewRuleRepo(db *gorm.DB) *RuleRepo {
 }
 
 func (r *RuleRepo) List(page models.Pagination, search string, enabled *bool) (*models.PaginatedResult, error) {
-	query := r.db.Model(&models.RateLimitRule{})
+	query := r.db.Model(&models.RateLimitRule{}).
+		Select("id, name, api_path, method, algorithm, enabled, version, limit_count, window_seconds, " +
+			"dimensions, token_bucket_config, leaky_bucket_config, shaping_config, gray_release_config, config_json, " +
+			"created_at, updated_at")
 	if search != "" {
 		q := "%" + search + "%"
 		query = query.Where("name ILIKE ? OR api_path ILIKE ? OR id ILIKE ?", q, q, q)
@@ -59,7 +62,12 @@ func (r *RuleRepo) List(page models.Pagination, search string, enabled *bool) (*
 
 func (r *RuleRepo) Get(id string) (*models.RateLimitRule, error) {
 	var rule models.RateLimitRule
-	err := r.db.First(&rule, "id = ?", id).Error
+	err := r.db.Model(&models.RateLimitRule{}).
+		Select("id, name, api_path, method, algorithm, enabled, version, limit_count, window_seconds, " +
+			"dimensions, token_bucket_config, leaky_bucket_config, shaping_config, gray_release_config, config_json, " +
+			"created_at, updated_at").
+		Where("id = ?", id).
+		First(&rule).Error
 	if err != nil {
 		return nil, err
 	}

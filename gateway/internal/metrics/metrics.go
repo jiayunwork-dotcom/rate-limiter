@@ -150,8 +150,39 @@ func (c *Collector) RecordRuleMatch(ruleID string, enabled bool) {
 }
 
 func (c *Collector) Initialize(nodeID string) {
-	c.SetMode(nodeID, true)
-	c.SetAdaptiveCoeff("global", 1.0)
-	c.SetQuotaUsage("global", "global", 0)
-	c.RequestTotal.WithLabelValues("", "", "", "", "200")
+	c.RequestTotal.WithLabelValues("unknown", "unknown", "/health", "GET", "200").Add(0)
+	c.RequestTotal.WithLabelValues("unknown", "unknown", "/metrics", "GET", "200").Add(0)
+
+	c.RequestAllowed.WithLabelValues("unknown", "unknown", "/*", "default-rule", "token_bucket").Add(0)
+
+	c.RequestRejected.WithLabelValues("unknown", "unknown", "/*", "default-rule", "token_bucket", "global").Add(0)
+	c.RequestRejected.WithLabelValues("unknown", "unknown", "/*", "default-rule", "token_bucket", "tenant").Add(0)
+	c.RequestRejected.WithLabelValues("unknown", "unknown", "/*", "default-rule", "token_bucket", "user").Add(0)
+	c.RequestRejected.WithLabelValues("unknown", "unknown", "/*", "default-rule", "token_bucket", "api").Add(0)
+
+	c.RequestLatency.WithLabelValues("/health", "GET").Observe(0.001)
+	c.RequestLatency.WithLabelValues("/metrics", "GET").Observe(0.001)
+
+	c.QueueLatency.WithLabelValues("default-rule", "0").Observe(0.001)
+	c.QueueLatency.WithLabelValues("default-rule", "1").Observe(0.001)
+
+	c.QuotaUsage.WithLabelValues("global", "global").Set(0)
+	c.QuotaUsage.WithLabelValues("tenant", "demo-tenant").Set(0)
+	c.QuotaUsage.WithLabelValues("user", "demo-user").Set(0)
+	c.QuotaUsage.WithLabelValues("api", "/api/v1/users").Set(0)
+
+	c.TokenBucketFill.WithLabelValues("default-rule", "global:default").Set(1.0)
+	c.TokenBucketFill.WithLabelValues("default-rule", "tenant:demo-tenant").Set(1.0)
+
+	c.AdaptiveCoeff.WithLabelValues("global").Set(1.0)
+
+	c.RedisLatency.WithLabelValues("ping").Observe(0.001)
+	c.RedisLatency.WithLabelValues("get").Observe(0.001)
+	c.RedisLatency.WithLabelValues("set").Observe(0.001)
+	c.RedisLatency.WithLabelValues("eval").Observe(0.001)
+
+	c.ModeState.WithLabelValues(nodeID).Set(1.0)
+
+	c.RuleMatchTotal.WithLabelValues("default-rule", "true").Add(0)
+	c.RuleMatchTotal.WithLabelValues("default-rule", "false").Add(0)
 }
