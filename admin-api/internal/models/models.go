@@ -276,3 +276,117 @@ type RuleTemplate struct {
 func (RuleTemplate) TableName() string {
 	return "rule_templates"
 }
+
+type AlertSeverity string
+type AlertStatus string
+type AlertTriggerType string
+type AlertScopeType string
+
+const (
+	SeverityCritical AlertSeverity = "critical"
+	SeverityWarning  AlertSeverity = "warning"
+	SeverityInfo     AlertSeverity = "info"
+
+	StatusFiring       AlertStatus = "firing"
+	StatusAcknowledged AlertStatus = "acknowledged"
+	StatusResolved     AlertStatus = "resolved"
+	StatusExpired      AlertStatus = "expired"
+
+	TriggerTypeThreshold   AlertTriggerType = "threshold"
+	TriggerTypeRate        AlertTriggerType = "rate"
+	TriggerTypeDuration    AlertTriggerType = "duration"
+
+	ScopeGlobal  AlertScopeType = "global"
+	ScopeAPI     AlertScopeType = "api"
+	ScopeTenant  AlertScopeType = "tenant"
+)
+
+type ThresholdTriggerConfig struct {
+	WindowSeconds int64 `json:"windowSeconds"`
+	Threshold     int64 `json:"threshold"`
+	Metric        string `json:"metric"`
+}
+
+type RateTriggerConfig struct {
+	WindowSeconds     int     `json:"windowSeconds"`
+	ThresholdPercent  float64 `json:"thresholdPercent"`
+	Metric            string  `json:"metric"`
+}
+
+type DurationTriggerConfig struct {
+	DurationSeconds int64  `json:"durationSeconds"`
+	Metric          string `json:"metric"`
+}
+
+type AlertRule struct {
+	ID                     string            `json:"id" gorm:"column:id;primaryKey"`
+	Name                   string            `json:"name" gorm:"column:name"`
+	Description            string            `json:"description" gorm:"column:description"`
+	Severity               AlertSeverity     `json:"severity" gorm:"column:severity"`
+	Enabled                bool              `json:"enabled" gorm:"column:enabled"`
+	TriggerType            AlertTriggerType  `json:"triggerType" gorm:"column:trigger_type"`
+	TriggerConfigJSON      json.RawMessage   `json:"-" gorm:"column:trigger_config"`
+	ScopeType              AlertScopeType    `json:"scopeType" gorm:"column:scope_type"`
+	ScopeValue             string            `json:"scopeValue,omitempty" gorm:"column:scope_value"`
+	NotificationChannels   []string          `json:"notificationChannels" gorm:"-"`
+	NotificationJSON       json.RawMessage   `json:"-" gorm:"column:notification_channels"`
+	SilentPeriodSeconds    int64             `json:"silentPeriodSeconds" gorm:"column:silent_period_seconds"`
+	RetentionHours         int64             `json:"retentionHours" gorm:"column:retention_hours"`
+	ThresholdTriggerConfig *ThresholdTriggerConfig `json:"thresholdConfig,omitempty" gorm:"-"`
+	RateTriggerConfig      *RateTriggerConfig      `json:"rateConfig,omitempty" gorm:"-"`
+	DurationTriggerConfig  *DurationTriggerConfig  `json:"durationConfig,omitempty" gorm:"-"`
+	CreatedAt              time.Time         `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt              time.Time         `json:"updatedAt" gorm:"column:updated_at"`
+}
+
+func (AlertRule) TableName() string {
+	return "alert_rules"
+}
+
+type AlertEvent struct {
+	ID                int64           `json:"id" gorm:"column:id;primaryKey"`
+	AlertRuleID       string          `json:"alertRuleId" gorm:"column:alert_rule_id"`
+	RuleName          string          `json:"ruleName" gorm:"column:rule_name"`
+	Severity          AlertSeverity   `json:"severity" gorm:"column:severity"`
+	Status            AlertStatus     `json:"status" gorm:"column:status"`
+	DimensionType     string          `json:"dimensionType" gorm:"column:dimension_type"`
+	DimensionValue    string          `json:"dimensionValue" gorm:"column:dimension_value"`
+	CurrentValue      float64         `json:"currentValue" gorm:"column:current_value"`
+	ThresholdValue    float64         `json:"thresholdValue" gorm:"column:threshold_value"`
+	TriggerSnapshot   json.RawMessage `json:"triggerSnapshot,omitempty" gorm:"column:trigger_snapshot"`
+	AcknowledgedBy    *string         `json:"acknowledgedBy,omitempty" gorm:"column:acknowledged_by"`
+	AcknowledgedAt    *time.Time      `json:"acknowledgedAt,omitempty" gorm:"column:acknowledged_at"`
+	ResolvedAt        *time.Time      `json:"resolvedAt,omitempty" gorm:"column:resolved_at"`
+	ExpiredAt         *time.Time      `json:"expiredAt,omitempty" gorm:"column:expired_at"`
+	FiringStartedAt   time.Time       `json:"firingStartedAt" gorm:"column:firing_started_at"`
+	LastFiringAt      time.Time       `json:"lastFiringAt" gorm:"column:last_firing_at"`
+	CreatedAt         time.Time       `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt         time.Time       `json:"updatedAt" gorm:"column:updated_at"`
+}
+
+func (AlertEvent) TableName() string {
+	return "alert_events"
+}
+
+type AlertStats struct {
+	FiringCount     int64 `json:"firingCount"`
+	TodayNewCount   int64 `json:"todayNewCount"`
+	WeekTotalCount  int64 `json:"weekTotalCount"`
+}
+
+type WebSocketMessage struct {
+	Type    string      `json:"type"`
+	Payload interface{} `json:"payload"`
+}
+
+type AlertPushMessage struct {
+	ID             int64         `json:"id"`
+	Severity       AlertSeverity `json:"severity"`
+	RuleName       string        `json:"ruleName"`
+	DimensionType  string        `json:"dimensionType"`
+	DimensionValue string        `json:"dimensionValue"`
+	TriggerTime    time.Time     `json:"triggerTime"`
+	CurrentValue   float64       `json:"currentValue"`
+	ThresholdValue float64       `json:"thresholdValue"`
+	Status         AlertStatus   `json:"status"`
+}

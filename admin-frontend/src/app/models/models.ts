@@ -182,3 +182,102 @@ export interface RuleTemplate {
   createdAt: string;
   updatedAt: string;
 }
+
+export type AlertSeverity = 'critical' | 'warning' | 'info';
+export type AlertStatus = 'firing' | 'acknowledged' | 'resolved' | 'expired';
+export type AlertTriggerType = 'threshold' | 'rate' | 'duration';
+export type AlertScopeType = 'global' | 'api' | 'tenant';
+
+export interface ThresholdTriggerConfig {
+  windowSeconds: number;
+  threshold: number;
+  metric: string;
+}
+
+export interface RateTriggerConfig {
+  windowSeconds: number;
+  thresholdPercent: number;
+  metric: string;
+}
+
+export interface DurationTriggerConfig {
+  durationSeconds: number;
+  metric: string;
+}
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  description: string;
+  severity: AlertSeverity;
+  enabled: boolean;
+  triggerType: AlertTriggerType;
+  scopeType: AlertScopeType;
+  scopeValue?: string;
+  notificationChannels: string[];
+  silentPeriodSeconds: number;
+  retentionHours: number;
+  thresholdConfig?: ThresholdTriggerConfig;
+  rateConfig?: RateTriggerConfig;
+  durationConfig?: DurationTriggerConfig;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertEvent {
+  id: number;
+  alertRuleId: string;
+  ruleName: string;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  dimensionType: string;
+  dimensionValue: string;
+  currentValue: number;
+  thresholdValue: number;
+  triggerSnapshot?: any;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+  resolvedAt?: string;
+  expiredAt?: string;
+  firingStartedAt: string;
+  lastFiringAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertStats {
+  firingCount: number;
+  todayNewCount: number;
+  weekTotalCount: number;
+}
+
+export interface AlertPushMessage {
+  id: number;
+  severity: AlertSeverity;
+  ruleName: string;
+  dimensionType: string;
+  dimensionValue: string;
+  triggerTime: string;
+  currentValue: number;
+  thresholdValue: number;
+  status: AlertStatus;
+}
+
+export interface WebSocketMessage {
+  type: string;
+  payload: any;
+}
+
+export interface PaginatedAlertResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  data: AlertEvent[];
+}
+
+export interface PaginatedAlertRuleResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  data: AlertRule[];
+}

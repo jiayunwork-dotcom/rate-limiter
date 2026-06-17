@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 
 	"github.com/ratelimiter/admin-api/internal/models"
 	"github.com/ratelimiter/admin-api/internal/repository"
@@ -469,4 +472,574 @@ func (s *TemplateService) Update(template *models.RuleTemplate) error {
 
 func (s *TemplateService) Delete(id string) error {
 	return s.templateRepo.Delete(id)
+}
+
+type WebSocketHub struct {
+	clients    map[*wsClient]bool
+	broadcast  chan []byte
+	register   chan *wsClient
+	unregister chan *wsClient
+}
+
+type wsClient struct {
+	hub  *WebSocketHub
+	conn *websocket.Conn
+	send chan []byte
+}
+
+func NewWebSocketHub() *WebSocketHub {
+	return &WebSocketHub{
+		broadcast:  make(chan []byte, 256),
+		register:   make(chan *wsClient),
+		unregister: make(chan *wsClient),
+		clients:    make(map[*wsClient]bool),
+	}
+}
+
+func (h *WebSocketHub) Run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.clients[client] = true
+		case client := <-h.unregister:
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				close(client.send)
+			}
+		case message := <-h.broadcast:
+			for client := range h.clients {
+				select {
+				case client.send <- message:
+				default:
+					close(client.send)
+					delete(h.clients, client)
+				}
+			}
+		}
+	}
+}
+
+func (h *WebSocketHub) Broadcast(msgType string, payload interface{}) {
+	msg := models.WebSocketMessage{
+		Type:    msgType,
+		Payload: payload,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	h.broadcast <- data
+}
+
+func (c *wsClient) readPump() {
+	defer func() {
+		c.hub.unregister <- c
+		c.conn.Close()
+	}()
+	for {
+		_, _, err := c.conn.ReadMessage()
+		if err != nil {
+			break
+		}
+	}
+}
+
+func (c *wsClient) writePump() {
+	defer func() {
+		c.conn.Close()
+	}()
+	for message := range c.send {
+		err := c.conn.WriteMessage(websocket.TextMessage, message)
+		if err != nil {
+			break
+		}
+	}
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+func (h *WebSocketHub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	client := &wsClient{hub: h, conn: conn, send: make(chan []byte, 256)}
+	h.register <- client
+
+	go client.writePump()
+	go client.readPump()
+}
+
+type AlertRuleService struct {
+	ruleRepo *repository.AlertRuleRepo
+}
+
+func NewAlertRuleService(ruleRepo *repository.AlertRuleRepo) *AlertRuleService {
+	return &AlertRuleService{ruleRepo: ruleRepo}
+}
+
+func (s *AlertRuleService) List(page models.Pagination, search string, enabled *bool) (*models.PaginatedResult, error) {
+	return s.ruleRepo.List(page, search, enabled)
+}
+
+func (s *AlertRuleService) ListAllEnabled() ([]models.AlertRule, error) {
+	return s.ruleRepo.ListAllEnabled()
+}
+
+func (s *AlertRuleService) Get(id string) (*models.AlertRule, error) {
+	return s.ruleRepo.Get(id)
+}
+
+func (s *AlertRuleService) Create(rule *models.AlertRule) error {
+	return s.ruleRepo.Create(rule)
+}
+
+func (s *AlertRuleService) Update(rule *models.AlertRule) error {
+	return s.ruleRepo.Update(rule)
+}
+
+func (s *AlertRuleService) Delete(id string) error {
+	return s.ruleRepo.Delete(id)
+}
+
+func (s *AlertRuleService) Toggle(id string, enabled bool) error {
+	return s.ruleRepo.Toggle(id, enabled)
+}
+
+type AlertEventService struct {
+	eventRepo *repository.AlertEventRepo
+	hub       *WebSocketHub
+}
+
+func NewAlertEventService(eventRepo *repository.AlertEventRepo, hub *WebSocketHub) *AlertEventService {
+	return &AlertEventService{eventRepo: eventRepo, hub: hub}
+}
+
+func (s *AlertEventService) List(
+	page models.Pagination,
+	status *models.AlertStatus,
+	severity *models.AlertSeverity,
+	ruleID string,
+	dimensionType string,
+	dimensionValue string,
+) (*models.PaginatedResult, error) {
+	return s.eventRepo.List(page, status, severity, ruleID, dimensionType, dimensionValue)
+}
+
+func (s *AlertEventService) Get(id int64) (*models.AlertEvent, error) {
+	return s.eventRepo.Get(id)
+}
+
+func (s *AlertEventService) Create(event *models.AlertEvent) error {
+	err := s.eventRepo.Create(event)
+	if err != nil {
+		return err
+	}
+	s.pushAlert(event)
+	return nil
+}
+
+func (s *AlertEventService) Update(event *models.AlertEvent) error {
+	return s.eventRepo.Update(event)
+}
+
+func (s *AlertEventService) Acknowledge(id int64, acknowledgedBy string) error {
+	err := s.eventRepo.Acknowledge(id, acknowledgedBy)
+	if err != nil {
+		return err
+	}
+	event, err := s.eventRepo.Get(id)
+	if err == nil {
+		s.hub.Broadcast("alert_updated", event)
+	}
+	return nil
+}
+
+func (s *AlertEventService) Resolve(id int64) error {
+	err := s.eventRepo.Resolve(id)
+	if err != nil {
+		return err
+	}
+	event, err := s.eventRepo.Get(id)
+	if err == nil {
+		s.hub.Broadcast("alert_resolved", event)
+	}
+	return nil
+}
+
+func (s *AlertEventService) GetStats() (*models.AlertStats, error) {
+	return s.eventRepo.GetStats()
+}
+
+func (s *AlertEventService) pushAlert(event *models.AlertEvent) {
+	pushMsg := models.AlertPushMessage{
+		ID:             event.ID,
+		Severity:       event.Severity,
+		RuleName:       event.RuleName,
+		DimensionType:  event.DimensionType,
+		DimensionValue: event.DimensionValue,
+		TriggerTime:    event.CreatedAt,
+		CurrentValue:   event.CurrentValue,
+		ThresholdValue: event.ThresholdValue,
+		Status:         event.Status,
+	}
+	s.hub.Broadcast("alert_firing", pushMsg)
+}
+
+type AlertEngineService struct {
+	ruleSvc        *AlertRuleService
+	eventSvc       *AlertEventService
+	alertEventRepo *repository.AlertEventRepo
+	db             *gorm.DB
+	lastFired      map[string]time.Time
+}
+
+func NewAlertEngineService(
+	ruleSvc *AlertRuleService,
+	eventSvc *AlertEventService,
+	alertEventRepo *repository.AlertEventRepo,
+	db *gorm.DB,
+) *AlertEngineService {
+	return &AlertEngineService{
+		ruleSvc:        ruleSvc,
+		eventSvc:       eventSvc,
+		alertEventRepo: alertEventRepo,
+		db:             db,
+		lastFired:      make(map[string]time.Time),
+	}
+}
+
+func (e *AlertEngineService) Evaluate() error {
+	rules, err := e.ruleSvc.ListAllEnabled()
+	if err != nil {
+		return err
+	}
+
+	for _, rule := range rules {
+		silentKey := "rule:" + rule.ID
+		lastFired, hasLast := e.lastFired[silentKey]
+		if hasLast && time.Since(lastFired) < time.Duration(rule.SilentPeriodSeconds)*time.Second {
+			continue
+		}
+
+		switch rule.TriggerType {
+		case models.TriggerTypeThreshold:
+			e.evaluateThresholdRule(&rule)
+		case models.TriggerTypeRate:
+			e.evaluateRateRule(&rule)
+		case models.TriggerTypeDuration:
+			e.evaluateDurationRule(&rule)
+		}
+	}
+
+	e.checkResolvedAlerts()
+	return nil
+}
+
+func (e *AlertEngineService) evaluateThresholdRule(rule *models.AlertRule) {
+	if rule.ThresholdTriggerConfig == nil {
+		return
+	}
+	cfg := rule.ThresholdTriggerConfig
+	window := time.Duration(cfg.WindowSeconds) * time.Second
+	endTime := time.Now()
+	startTime := endTime.Add(-window)
+
+	dimType, dimValues := e.getDimensionValues(rule, startTime, endTime)
+
+	for _, dimValue := range dimValues {
+		count := e.getRejectCountByDimension(rule, dimType, dimValue, startTime, endTime)
+		threshold := float64(cfg.Threshold)
+
+		if float64(count) >= threshold {
+			dimKey := rule.ID + ":" + dimType + ":" + dimValue
+			active, _ := e.alertEventRepo.FindActiveByRuleAndDimension(rule.ID, dimType, dimValue)
+
+			if active == nil {
+				event := &models.AlertEvent{
+					AlertRuleID:    rule.ID,
+					RuleName:       rule.Name,
+					Severity:       rule.Severity,
+					Status:         models.StatusFiring,
+					DimensionType:  dimType,
+					DimensionValue: dimValue,
+					CurrentValue:   float64(count),
+					ThresholdValue: threshold,
+					TriggerSnapshot: e.buildSnapshot(map[string]interface{}{
+						"windowSeconds": cfg.WindowSeconds,
+						"metric":        cfg.Metric,
+						"rejectCount":   count,
+					}),
+				}
+				_ = e.eventSvc.Create(event)
+				e.lastFired["rule:"+rule.ID] = time.Now()
+			} else {
+				active.CurrentValue = float64(count)
+				active.LastFiringAt = time.Now()
+				_ = e.alertEventRepo.Update(active)
+			}
+			_ = dimKey
+		}
+	}
+}
+
+func (e *AlertEngineService) evaluateRateRule(rule *models.AlertRule) {
+	if rule.RateTriggerConfig == nil {
+		return
+	}
+	cfg := rule.RateTriggerConfig
+	window := time.Duration(cfg.WindowSeconds) * time.Second
+	endTime := time.Now()
+	startTime := endTime.Add(-window)
+
+	dimType, dimValues := e.getDimensionValues(rule, startTime, endTime)
+
+	for _, dimValue := range dimValues {
+		rejectCount, totalCount := e.getRejectAndTotalByDimension(rule, dimType, dimValue, startTime, endTime)
+		var rejectRate float64
+		if totalCount > 0 {
+			rejectRate = float64(rejectCount) / float64(totalCount) * 100
+		}
+
+		if rejectRate >= cfg.ThresholdPercent {
+			active, _ := e.alertEventRepo.FindActiveByRuleAndDimension(rule.ID, dimType, dimValue)
+
+			if active == nil {
+				event := &models.AlertEvent{
+					AlertRuleID:    rule.ID,
+					RuleName:       rule.Name,
+					Severity:       rule.Severity,
+					Status:         models.StatusFiring,
+					DimensionType:  dimType,
+					DimensionValue: dimValue,
+					CurrentValue:   rejectRate,
+					ThresholdValue: cfg.ThresholdPercent,
+					TriggerSnapshot: e.buildSnapshot(map[string]interface{}{
+						"windowSeconds":    cfg.WindowSeconds,
+						"metric":           cfg.Metric,
+						"rejectCount":      rejectCount,
+						"totalCount":       totalCount,
+						"rejectRatePercent": rejectRate,
+					}),
+				}
+				_ = e.eventSvc.Create(event)
+				e.lastFired["rule:"+rule.ID] = time.Now()
+			} else {
+				active.CurrentValue = rejectRate
+				active.LastFiringAt = time.Now()
+				_ = e.alertEventRepo.Update(active)
+			}
+		}
+	}
+}
+
+func (e *AlertEngineService) evaluateDurationRule(rule *models.AlertRule) {
+	if rule.DurationTriggerConfig == nil {
+		return
+	}
+	cfg := rule.DurationTriggerConfig
+	duration := time.Duration(cfg.DurationSeconds) * time.Second
+	endTime := time.Now()
+	startTime := endTime.Add(-duration)
+
+	dimType, dimValues := e.getDimensionValues(rule, startTime, endTime)
+
+	for _, dimValue := range dimValues {
+		hasRejection := e.hasContinuousRejections(rule, dimType, dimValue, startTime, endTime)
+
+		if hasRejection {
+			active, _ := e.alertEventRepo.FindActiveByRuleAndDimension(rule.ID, dimType, dimValue)
+
+			if active == nil {
+				event := &models.AlertEvent{
+					AlertRuleID:    rule.ID,
+					RuleName:       rule.Name,
+					Severity:       rule.Severity,
+					Status:         models.StatusFiring,
+					DimensionType:  dimType,
+					DimensionValue: dimValue,
+					CurrentValue:   float64(cfg.DurationSeconds),
+					ThresholdValue: float64(cfg.DurationSeconds),
+					TriggerSnapshot: e.buildSnapshot(map[string]interface{}{
+						"durationSeconds": cfg.DurationSeconds,
+						"metric":          cfg.Metric,
+					}),
+				}
+				_ = e.eventSvc.Create(event)
+				e.lastFired["rule:"+rule.ID] = time.Now()
+			} else {
+				active.LastFiringAt = time.Now()
+				_ = e.alertEventRepo.Update(active)
+			}
+		}
+	}
+}
+
+func (e *AlertEngineService) checkResolvedAlerts() {
+	activeEvents, err := e.alertEventRepo.ListActiveEvents()
+	if err != nil {
+		return
+	}
+
+	for _, event := range activeEvents {
+		rule, err := e.ruleSvc.Get(event.AlertRuleID)
+		if err != nil || rule == nil {
+			continue
+		}
+
+		resolved := false
+		switch rule.TriggerType {
+		case models.TriggerTypeThreshold:
+			if rule.ThresholdTriggerConfig != nil {
+				window := time.Duration(rule.ThresholdTriggerConfig.WindowSeconds) * time.Second
+				endTime := time.Now()
+				startTime := endTime.Add(-window)
+				count := e.getRejectCountByDimension(rule, event.DimensionType, event.DimensionValue, startTime, endTime)
+				if count < int64(rule.ThresholdTriggerConfig.Threshold) {
+					resolved = true
+				}
+			}
+		case models.TriggerTypeRate:
+			if rule.RateTriggerConfig != nil {
+				window := time.Duration(rule.RateTriggerConfig.WindowSeconds) * time.Second
+				endTime := time.Now()
+				startTime := endTime.Add(-window)
+				rejectCount, totalCount := e.getRejectAndTotalByDimension(rule, event.DimensionType, event.DimensionValue, startTime, endTime)
+				var rejectRate float64
+				if totalCount > 0 {
+					rejectRate = float64(rejectCount) / float64(totalCount) * 100
+				}
+				if rejectRate < rule.RateTriggerConfig.ThresholdPercent {
+					resolved = true
+				}
+			}
+		case models.TriggerTypeDuration:
+			if rule.DurationTriggerConfig != nil {
+				window := time.Duration(rule.DurationTriggerConfig.DurationSeconds) * time.Second
+				endTime := time.Now()
+				startTime := endTime.Add(-window)
+				hasRejection := e.hasContinuousRejections(rule, event.DimensionType, event.DimensionValue, startTime, endTime)
+				if !hasRejection {
+					resolved = true
+				}
+			}
+		}
+
+		if resolved {
+			_ = e.eventSvc.Resolve(event.ID)
+		}
+	}
+}
+
+func (e *AlertEngineService) getDimensionValues(rule *models.AlertRule, startTime, endTime time.Time) (string, []string) {
+	switch rule.ScopeType {
+	case models.ScopeAPI:
+		return "api_path", []string{rule.ScopeValue}
+	case models.ScopeTenant:
+		return "tenant_id", []string{rule.ScopeValue}
+	default:
+		return e.getDistinctDimensions(rule, startTime, endTime)
+	}
+}
+
+func (e *AlertEngineService) getDistinctDimensions(rule *models.AlertRule, startTime, endTime time.Time) (string, []string) {
+	type dimRow struct {
+		Value string
+	}
+
+	if rule.TriggerType == models.TriggerTypeRate && rule.ScopeType == models.ScopeGlobal {
+		var results []dimRow
+		sql := `SELECT DISTINCT COALESCE(tenant_id, 'unknown') as value FROM rate_limit_events WHERE timestamp >= ? AND timestamp <= ? LIMIT 100`
+		e.db.Raw(sql, startTime, endTime).Scan(&results)
+		values := make([]string, 0, len(results))
+		for _, r := range results {
+			values = append(values, r.Value)
+		}
+		return "tenant_id", values
+	}
+
+	var results []dimRow
+	sql := `SELECT DISTINCT COALESCE(api_path, 'unknown') as value FROM rate_limit_events WHERE timestamp >= ? AND timestamp <= ? LIMIT 100`
+	e.db.Raw(sql, startTime, endTime).Scan(&results)
+	values := make([]string, 0, len(results))
+	for _, r := range results {
+		values = append(values, r.Value)
+	}
+	return "api_path", values
+}
+
+func (e *AlertEngineService) getRejectCountByDimension(rule *models.AlertRule, dimType, dimValue string, startTime, endTime time.Time) int64 {
+	var count int64
+	var whereSQL string
+	var args []interface{}
+
+	switch dimType {
+	case "tenant_id":
+		whereSQL = "tenant_id = ? AND allowed = false AND timestamp >= ? AND timestamp <= ?"
+		args = []interface{}{dimValue, startTime, endTime}
+	default:
+		whereSQL = "api_path = ? AND allowed = false AND timestamp >= ? AND timestamp <= ?"
+		args = []interface{}{dimValue, startTime, endTime}
+	}
+
+	e.db.Model(&models.RateLimitEvent{}).
+		Where(whereSQL, args...).
+		Count(&count)
+	return count
+}
+
+func (e *AlertEngineService) getRejectAndTotalByDimension(rule *models.AlertRule, dimType, dimValue string, startTime, endTime time.Time) (int64, int64) {
+	type result struct {
+		Rejected int64
+		Total    int64
+	}
+	var res result
+	var whereSQL string
+	var args []interface{}
+
+	switch dimType {
+	case "tenant_id":
+		whereSQL = "tenant_id = ? AND timestamp >= ? AND timestamp <= ?"
+		args = []interface{}{dimValue, startTime, endTime}
+	default:
+		whereSQL = "api_path = ? AND timestamp >= ? AND timestamp <= ?"
+		args = []interface{}{dimValue, startTime, endTime}
+	}
+
+	e.db.Model(&models.RateLimitEvent{}).
+		Select("COUNT(*) FILTER (WHERE allowed = false) as rejected, COUNT(*) as total").
+		Where(whereSQL, args...).
+		Scan(&res)
+	return res.Rejected, res.Total
+}
+
+func (e *AlertEngineService) hasContinuousRejections(rule *models.AlertRule, dimType, dimValue string, startTime, endTime time.Time) bool {
+	var count int64
+	var whereSQL string
+	var args []interface{}
+
+	switch dimType {
+	case "tenant_id":
+		whereSQL = "tenant_id = ? AND allowed = false AND timestamp >= ? AND timestamp <= ?"
+		args = []interface{}{dimValue, startTime, endTime}
+	default:
+		whereSQL = "api_path = ? AND allowed = false AND timestamp >= ? AND timestamp <= ?"
+		args = []interface{}{dimValue, startTime, endTime}
+	}
+
+	e.db.Model(&models.RateLimitEvent{}).
+		Where(whereSQL, args...).
+		Count(&count)
+	return count > 0
+}
+
+func (e *AlertEngineService) buildSnapshot(data map[string]interface{}) json.RawMessage {
+	b, _ := json.Marshal(data)
+	return b
 }

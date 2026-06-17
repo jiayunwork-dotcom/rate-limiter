@@ -702,3 +702,324 @@ func unmarshalTemplateFields(template *models.RuleTemplate) {
 		}
 	}
 }
+
+type AlertRuleRepo struct {
+	db *gorm.DB
+}
+
+func NewAlertRuleRepo(db *gorm.DB) *AlertRuleRepo {
+	return &AlertRuleRepo{db: db}
+}
+
+func (r *AlertRuleRepo) List(page models.Pagination, search string, enabled *bool) (*models.PaginatedResult, error) {
+	query := r.db.Model(&models.AlertRule{})
+	if search != "" {
+		q := "%" + search + "%"
+		query = query.Where("name ILIKE ? OR description ILIKE ?", q, q)
+	}
+	if enabled != nil {
+		query = query.Where("enabled = ?", *enabled)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var rules []models.AlertRule
+	err := query.Order("updated_at DESC").
+		Offset(page.GetOffset()).
+		Limit(page.GetPageSize()).
+		Find(&rules).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range rules {
+		unmarshalAlertRuleFields(&rules[i])
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.GetPageSize(),
+		Data:     rules,
+	}, nil
+}
+
+func (r *AlertRuleRepo) ListAllEnabled() ([]models.AlertRule, error) {
+	var rules []models.AlertRule
+	err := r.db.Where("enabled = ?", true).Find(&rules).Error
+	if err != nil {
+		return nil, err
+	}
+	for i := range rules {
+		unmarshalAlertRuleFields(&rules[i])
+	}
+	return rules, nil
+}
+
+func (r *AlertRuleRepo) Get(id string) (*models.AlertRule, error) {
+	var rule models.AlertRule
+	err := r.db.Where("id = ?", id).First(&rule).Error
+	if err != nil {
+		return nil, err
+	}
+	unmarshalAlertRuleFields(&rule)
+	return &rule, nil
+}
+
+func (r *AlertRuleRepo) Create(rule *models.AlertRule) error {
+	if rule.ID == "" {
+		rule.ID = generateUUID()
+	}
+	rule.CreatedAt = time.Now()
+	rule.UpdatedAt = time.Now()
+	marshalAlertRuleFields(rule)
+	return r.db.Create(rule).Error
+}
+
+func (r *AlertRuleRepo) Update(rule *models.AlertRule) error {
+	existing, err := r.Get(rule.ID)
+	if err != nil {
+		return err
+	}
+	rule.CreatedAt = existing.CreatedAt
+	rule.UpdatedAt = time.Now()
+	marshalAlertRuleFields(rule)
+	return r.db.Save(rule).Error
+}
+
+func (r *AlertRuleRepo) Delete(id string) error {
+	return r.db.Delete(&models.AlertRule{}, "id = ?", id).Error
+}
+
+func (r *AlertRuleRepo) Toggle(id string, enabled bool) error {
+	res := r.db.Model(&models.AlertRule{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"enabled":    enabled,
+			"updated_at": time.Now(),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func marshalAlertRuleFields(rule *models.AlertRule) {
+	switch rule.TriggerType {
+	case models.TriggerTypeThreshold:
+		if rule.ThresholdTriggerConfig != nil {
+			data, _ := json.Marshal(rule.ThresholdTriggerConfig)
+			rule.TriggerConfigJSON = data
+		}
+	case models.TriggerTypeRate:
+		if rule.RateTriggerConfig != nil {
+			data, _ := json.Marshal(rule.RateTriggerConfig)
+			rule.TriggerConfigJSON = data
+		}
+	case models.TriggerTypeDuration:
+		if rule.DurationTriggerConfig != nil {
+			data, _ := json.Marshal(rule.DurationTriggerConfig)
+			rule.TriggerConfigJSON = data
+		}
+	}
+	if rule.NotificationChannels != nil {
+		data, _ := json.Marshal(rule.NotificationChannels)
+		rule.NotificationJSON = data
+	}
+}
+
+func unmarshalAlertRuleFields(rule *models.AlertRule) {
+	if len(rule.TriggerConfigJSON) > 0 {
+		normalized := normalizeJSONKeys(rule.TriggerConfigJSON)
+		switch rule.TriggerType {
+		case models.TriggerTypeThreshold:
+			var cfg models.ThresholdTriggerConfig
+			if json.Unmarshal(normalized, &cfg) == nil {
+				rule.ThresholdTriggerConfig = &cfg
+			}
+		case models.TriggerTypeRate:
+			var cfg models.RateTriggerConfig
+			if json.Unmarshal(normalized, &cfg) == nil {
+				rule.RateTriggerConfig = &cfg
+			}
+		case models.TriggerTypeDuration:
+			var cfg models.DurationTriggerConfig
+			if json.Unmarshal(normalized, &cfg) == nil {
+				rule.DurationTriggerConfig = &cfg
+			}
+		}
+	}
+	if len(rule.NotificationJSON) > 0 {
+		var channels []string
+		if json.Unmarshal(rule.NotificationJSON, &channels) == nil {
+			rule.NotificationChannels = channels
+		}
+	}
+}
+
+type AlertEventRepo struct {
+	db *gorm.DB
+}
+
+func NewAlertEventRepo(db *gorm.DB) *AlertEventRepo {
+	return &AlertEventRepo{db: db}
+}
+
+func (r *AlertEventRepo) List(
+	page models.Pagination,
+	status *models.AlertStatus,
+	severity *models.AlertSeverity,
+	ruleID string,
+	dimensionType string,
+	dimensionValue string,
+) (*models.PaginatedResult, error) {
+	query := r.db.Model(&models.AlertEvent{})
+	if status != nil {
+		query = query.Where("status = ?", *status)
+	}
+	if severity != nil {
+		query = query.Where("severity = ?", *severity)
+	}
+	if ruleID != "" {
+		query = query.Where("alert_rule_id = ?", ruleID)
+	}
+	if dimensionType != "" {
+		query = query.Where("dimension_type = ?", dimensionType)
+	}
+	if dimensionValue != "" {
+		query = query.Where("dimension_value ILIKE ?", "%"+dimensionValue+"%")
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var events []models.AlertEvent
+	err := query.Order("created_at DESC").
+		Offset(page.GetOffset()).
+		Limit(page.GetPageSize()).
+		Find(&events).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.GetPageSize(),
+		Data:     events,
+	}, nil
+}
+
+func (r *AlertEventRepo) Get(id int64) (*models.AlertEvent, error) {
+	var event models.AlertEvent
+	err := r.db.Where("id = ?", id).First(&event).Error
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
+func (r *AlertEventRepo) Create(event *models.AlertEvent) error {
+	now := time.Now()
+	event.CreatedAt = now
+	event.UpdatedAt = now
+	if event.FiringStartedAt.IsZero() {
+		event.FiringStartedAt = now
+	}
+	if event.LastFiringAt.IsZero() {
+		event.LastFiringAt = now
+	}
+	return r.db.Create(event).Error
+}
+
+func (r *AlertEventRepo) Update(event *models.AlertEvent) error {
+	event.UpdatedAt = time.Now()
+	return r.db.Save(event).Error
+}
+
+func (r *AlertEventRepo) Acknowledge(id int64, acknowledgedBy string) error {
+	now := time.Now()
+	res := r.db.Model(&models.AlertEvent{}).
+		Where("id = ? AND status = ?", id, models.StatusFiring).
+		Updates(map[string]interface{}{
+			"status":          models.StatusAcknowledged,
+			"acknowledged_by": acknowledgedBy,
+			"acknowledged_at": now,
+			"updated_at":      now,
+		})
+	return res.Error
+}
+
+func (r *AlertEventRepo) Resolve(id int64) error {
+	now := time.Now()
+	res := r.db.Model(&models.AlertEvent{}).
+		Where("id = ? AND status IN ?", id, []models.AlertStatus{models.StatusFiring, models.StatusAcknowledged}).
+		Updates(map[string]interface{}{
+			"status":     models.StatusResolved,
+			"resolved_at": now,
+			"updated_at": now,
+		})
+	return res.Error
+}
+
+func (r *AlertEventRepo) FindActiveByRuleAndDimension(ruleID, dimensionType, dimensionValue string) (*models.AlertEvent, error) {
+	var event models.AlertEvent
+	err := r.db.Where(
+		"alert_rule_id = ? AND dimension_type = ? AND dimension_value = ? AND status IN ?",
+		ruleID, dimensionType, dimensionValue,
+		[]models.AlertStatus{models.StatusFiring, models.StatusAcknowledged},
+	).Order("created_at DESC").First(&event).Error
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
+}
+
+func (r *AlertEventRepo) ListActiveEvents() ([]models.AlertEvent, error) {
+	var events []models.AlertEvent
+	err := r.db.Where(
+		"status IN ?",
+		[]models.AlertStatus{models.StatusFiring, models.StatusAcknowledged},
+	).Find(&events).Error
+	return events, err
+}
+
+func (r *AlertEventRepo) GetStats() (*models.AlertStats, error) {
+	stats := &models.AlertStats{}
+
+	var firingCount int64
+	if err := r.db.Model(&models.AlertEvent{}).
+		Where("status = ?", models.StatusFiring).
+		Count(&firingCount).Error; err != nil {
+		return nil, err
+	}
+	stats.FiringCount = firingCount
+
+	todayStart := time.Now().Truncate(24 * time.Hour)
+	var todayCount int64
+	if err := r.db.Model(&models.AlertEvent{}).
+		Where("created_at >= ?", todayStart).
+		Count(&todayCount).Error; err != nil {
+		return nil, err
+	}
+	stats.TodayNewCount = todayCount
+
+	weekStart := time.Now().AddDate(0, 0, -7)
+	var weekCount int64
+	if err := r.db.Model(&models.AlertEvent{}).
+		Where("created_at >= ?", weekStart).
+		Count(&weekCount).Error; err != nil {
+		return nil, err
+	}
+	stats.WeekTotalCount = weekCount
+
+	return stats, nil
+}

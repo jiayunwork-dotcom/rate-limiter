@@ -4,7 +4,8 @@ import { Observable } from 'rxjs';
 import {
   RuleConfig, RuleVersion, QuotaConfig, QuotaTreeNode, RateLimitEvent,
   TrafficSeriesPoint, TenantShareData, HeatmapData, AdaptiveStatus, AdaptiveConfigUpdate,
-  RuleTemplate
+  RuleTemplate, AlertRule, AlertEvent, AlertStats,
+  PaginatedAlertResult, PaginatedAlertRuleResult, AlertStatus, AlertSeverity
 } from '../models/models';
 
 @Injectable({ providedIn: 'root' })
@@ -145,5 +146,70 @@ export class ApiService {
 
   deleteTemplate(id: string): Observable<any> {
     return this.http.delete(`${this.baseUrl}/templates/${id}`);
+  }
+
+  listAlertRules(params?: {
+    search?: string;
+    enabled?: boolean;
+    page?: number;
+    pageSize?: number;
+  }): Observable<PaginatedAlertRuleResult> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get<PaginatedAlertRuleResult>(`${this.baseUrl}/alert-rules`, { params: httpParams });
+  }
+
+  getAlertRule(id: string): Observable<AlertRule> {
+    return this.http.get<AlertRule>(`${this.baseUrl}/alert-rules/${id}`);
+  }
+
+  createAlertRule(rule: Partial<AlertRule>): Observable<AlertRule> {
+    return this.http.post<AlertRule>(`${this.baseUrl}/alert-rules`, rule);
+  }
+
+  updateAlertRule(id: string, rule: Partial<AlertRule>): Observable<AlertRule> {
+    return this.http.put<AlertRule>(`${this.baseUrl}/alert-rules/${id}`, rule);
+  }
+
+  deleteAlertRule(id: string): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/alert-rules/${id}`);
+  }
+
+  toggleAlertRule(id: string, enabled: boolean): Observable<any> {
+    return this.http.patch(`${this.baseUrl}/alert-rules/${id}/toggle`, { enabled });
+  }
+
+  listAlertEvents(params?: {
+    status?: AlertStatus;
+    severity?: AlertSeverity;
+    ruleId?: string;
+    dimensionType?: string;
+    dimensionValue?: string;
+    page?: number;
+    pageSize?: number;
+  }): Observable<PaginatedAlertResult> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get<PaginatedAlertResult>(`${this.baseUrl}/alert-events`, { params: httpParams });
+  }
+
+  getAlertEvent(id: number): Observable<AlertEvent> {
+    return this.http.get<AlertEvent>(`${this.baseUrl}/alert-events/${id}`);
+  }
+
+  acknowledgeAlert(id: number, acknowledgedBy?: string): Observable<any> {
+    return this.http.post(`${this.baseUrl}/alert-events/${id}/acknowledge`, { acknowledgedBy });
+  }
+
+  getAlertStats(): Observable<AlertStats> {
+    return this.http.get<AlertStats>(`${this.baseUrl}/alert-events/stats`);
   }
 }

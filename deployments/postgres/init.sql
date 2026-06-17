@@ -259,3 +259,85 @@ INSERT INTO rule_templates (name, description, algorithm, limit_count, window_se
     '{"enabled": false, "max_queue_depth": 0, "max_wait_ms": 0, "priority_enabled": false}'
 )
 ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::VARCHAR,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    severity VARCHAR(16) NOT NULL DEFAULT 'warning',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    trigger_type VARCHAR(32) NOT NULL,
+    trigger_config JSONB NOT NULL DEFAULT '{}',
+    scope_type VARCHAR(16) NOT NULL DEFAULT 'global',
+    scope_value VARCHAR(512),
+    notification_channels JSONB NOT NULL DEFAULT '[]',
+    silent_period_seconds BIGINT NOT NULL DEFAULT 300,
+    retention_hours BIGINT NOT NULL DEFAULT 168,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_alert_rules_enabled ON alert_rules(enabled);
+CREATE INDEX idx_alert_rules_trigger_type ON alert_rules(trigger_type);
+CREATE INDEX idx_alert_rules_scope ON alert_rules(scope_type, scope_value);
+
+CREATE TABLE IF NOT EXISTS alert_events (
+    id BIGSERIAL PRIMARY KEY,
+    alert_rule_id VARCHAR(64) NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+    rule_name VARCHAR(255) NOT NULL,
+    severity VARCHAR(16) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'firing',
+    dimension_type VARCHAR(32) NOT NULL,
+    dimension_value VARCHAR(512) NOT NULL,
+    current_value DOUBLE PRECISION NOT NULL,
+    threshold_value DOUBLE PRECISION NOT NULL,
+    trigger_snapshot JSONB NOT NULL DEFAULT '{}',
+    acknowledged_by VARCHAR(128),
+    acknowledged_at TIMESTAMP WITH TIME ZONE,
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    expired_at TIMESTAMP WITH TIME ZONE,
+    firing_started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    last_firing_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_alert_events_status ON alert_events(status);
+CREATE INDEX idx_alert_events_severity ON alert_events(severity);
+CREATE INDEX idx_alert_events_rule ON alert_events(alert_rule_id, created_at DESC);
+CREATE INDEX idx_alert_events_dimension ON alert_events(dimension_type, dimension_value, created_at DESC);
+CREATE INDEX idx_alert_events_created ON alert_events(created_at DESC);
+CREATE INDEX idx_alert_events_status_created ON alert_events(status, created_at DESC);
+
+CREATE TRIGGER trg_update_alert_rules_timestamp
+BEFORE UPDATE ON alert_rules
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TRIGGER trg_update_alert_events_timestamp
+BEFORE UPDATE ON alert_events
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+INSERT INTO alert_rules (id, name, description, severity, trigger_type, trigger_config, scope_type, scope_value, silent_period_seconds) VALUES
+(
+    'rule-api-high-reject',
+    'API高拒绝率告警',
+    '当某个API的拒绝次数在60秒内超过100次时触发告警',
+    'critical',
+    'threshold',
+    '{"windowSeconds": 60, "threshold": 100, "metric": "reject_count"}',
+    'global',
+    NULL,
+    300
+),
+(
+    'rule-tenant-reject-rate',
+    '租户拒绝率告警',
+    '当某个租户的拒绝率在5分钟内超过20%时触发告警',
+    'warning',
+    'rate',
+    '{"windowSeconds": 300, "thresholdPercent": 20, "metric": "reject_rate"}',
+    'global',
+    NULL,
+    600
+)
+ON CONFLICT DO NOTHING;

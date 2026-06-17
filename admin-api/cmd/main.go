@@ -70,14 +70,33 @@ func main() {
 	tenantRepo := repository.NewTenantRepo(db)
 	adaptiveRepo := repository.NewAdaptiveRepo(db)
 	templateRepo := repository.NewTemplateRepo(db)
+	alertRuleRepo := repository.NewAlertRuleRepo(db)
+	alertEventRepo := repository.NewAlertEventRepo(db)
+
+	wsHub := services.NewWebSocketHub()
+	go wsHub.Run()
 
 	ruleSvc := services.NewRuleService(ruleRepo, rdb)
 	eventSvc := services.NewEventService(eventRepo)
 	quotaSvc := services.NewQuotaService(quotaRepo, tenantRepo, eventRepo, rdb)
 	adaptiveSvc := services.NewAdaptiveService(adaptiveRepo, rdb)
 	templateSvc := services.NewTemplateService(templateRepo)
+	alertRuleSvc := services.NewAlertRuleService(alertRuleRepo)
+	alertEventSvc := services.NewAlertEventService(alertEventRepo, wsHub)
 
-	h := handlers.NewHandler(ruleSvc, eventSvc, quotaSvc, adaptiveSvc, templateSvc)
+	alertEngine := services.NewAlertEngineService(alertRuleSvc, alertEventSvc, alertEventRepo, db)
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := alertEngine.Evaluate(); err != nil {
+				log.Printf("Alert engine evaluation error: %v", err)
+			}
+		}
+	}()
+
+	h := handlers.NewHandler(ruleSvc, eventSvc, quotaSvc, adaptiveSvc, templateSvc, alertRuleSvc, alertEventSvc, wsHub)
 
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
@@ -137,7 +156,27 @@ func main() {
 			templates.PUT("/:id", h.UpdateTemplate)
 			templates.DELETE("/:id", h.DeleteTemplate)
 		}
+
+		alertRules := api.Group("/alert-rules")
+		{
+			alertRules.GET("", h.ListAlertRules)
+			alertRules.POST("", h.CreateAlertRule)
+			alertRules.GET("/:id", h.GetAlertRule)
+			alertRules.PUT("/:id", h.UpdateAlertRule)
+			alertRules.DELETE("/:id", h.DeleteAlertRule)
+			alertRules.PATCH("/:id/toggle", h.ToggleAlertRule)
+		}
+
+		alertEvents := api.Group("/alert-events")
+		{
+			alertEvents.GET("", h.ListAlertEvents)
+			alertEvents.GET("/stats", h.GetAlertStats)
+			alertEvents.GET("/:id", h.GetAlertEvent)
+			alertEvents.POST("/:id/acknowledge", h.AcknowledgeAlert)
+		}
 	}
+
+	engine.GET("/ws/alerts", h.WebSocketEndpoint)
 
 	engine.GET("/metrics", gin.WrapH(promhttp.Handler()))
 

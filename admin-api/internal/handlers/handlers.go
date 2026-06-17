@@ -13,11 +13,14 @@ import (
 )
 
 type Handler struct {
-	rules     *services.RuleService
-	events    *services.EventService
-	quotas    *services.QuotaService
-	adaptive  *services.AdaptiveService
-	templates *services.TemplateService
+	rules      *services.RuleService
+	events     *services.EventService
+	quotas     *services.QuotaService
+	adaptive   *services.AdaptiveService
+	templates  *services.TemplateService
+	alertRules *services.AlertRuleService
+	alertEvents *services.AlertEventService
+	wsHub      *services.WebSocketHub
 }
 
 func NewHandler(
@@ -26,13 +29,19 @@ func NewHandler(
 	quotas *services.QuotaService,
 	adaptive *services.AdaptiveService,
 	templates *services.TemplateService,
+	alertRules *services.AlertRuleService,
+	alertEvents *services.AlertEventService,
+	wsHub *services.WebSocketHub,
 ) *Handler {
 	return &Handler{
-		rules:     rules,
-		events:    events,
-		quotas:    quotas,
-		adaptive:  adaptive,
-		templates: templates,
+		rules:      rules,
+		events:     events,
+		quotas:     quotas,
+		adaptive:   adaptive,
+		templates:  templates,
+		alertRules: alertRules,
+		alertEvents: alertEvents,
+		wsHub:      wsHub,
 	}
 }
 
@@ -454,6 +463,178 @@ func (h *Handler) DeleteTemplate(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ListAlertRules(c *gin.Context) {
+	var page models.Pagination
+	if err := c.ShouldBindQuery(&page); err != nil {
+		page.Page = 1
+		page.PageSize = 20
+	}
+	if page.Page <= 0 {
+		page.Page = 1
+	}
+	if page.PageSize <= 0 {
+		page.PageSize = 20
+	}
+	search := c.Query("search")
+	var enabled *bool
+	if e := c.Query("enabled"); e != "" {
+		v := e == "true" || e == "1"
+		enabled = &v
+	}
+	result, err := h.alertRules.List(page, search, enabled)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list alert rules",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) GetAlertRule(c *gin.Context) {
+	id := c.Param("id")
+	rule, err := h.alertRules.Get(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "alert rule not found"})
+		return
+	}
+	c.JSON(http.StatusOK, rule)
+}
+
+func (h *Handler) CreateAlertRule(c *gin.Context) {
+	var rule models.AlertRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.alertRules.Create(&rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, rule)
+}
+
+func (h *Handler) UpdateAlertRule(c *gin.Context) {
+	id := c.Param("id")
+	var rule models.AlertRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	rule.ID = id
+	if err := h.alertRules.Update(&rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, rule)
+}
+
+func (h *Handler) DeleteAlertRule(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.alertRules.Delete(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ToggleAlertRule(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.alertRules.Toggle(id, body.Enabled); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": id, "enabled": body.Enabled})
+}
+
+func (h *Handler) ListAlertEvents(c *gin.Context) {
+	var page models.Pagination
+	if err := c.ShouldBindQuery(&page); err != nil {
+		page.Page = 1
+		page.PageSize = 20
+	}
+
+	var status *models.AlertStatus
+	if s := c.Query("status"); s != "" {
+		sv := models.AlertStatus(s)
+		status = &sv
+	}
+	var severity *models.AlertSeverity
+	if s := c.Query("severity"); s != "" {
+		sv := models.AlertSeverity(s)
+		severity = &sv
+	}
+	ruleID := c.Query("rule_id")
+	dimensionType := c.Query("dimension_type")
+	dimensionValue := c.Query("dimension_value")
+
+	result, err := h.alertEvents.List(page, status, severity, ruleID, dimensionType, dimensionValue)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list alert events",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) GetAlertEvent(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	event, err := h.alertEvents.Get(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "alert event not found"})
+		return
+	}
+	c.JSON(http.StatusOK, event)
+}
+
+func (h *Handler) AcknowledgeAlert(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var body struct {
+		AcknowledgedBy string `json:"acknowledgedBy"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		body.AcknowledgedBy = "system"
+	}
+	if err := h.alertEvents.Acknowledge(id, body.AcknowledgedBy); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "acknowledged"})
+}
+
+func (h *Handler) GetAlertStats(c *gin.Context) {
+	stats, err := h.alertEvents.GetStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, stats)
+}
+
+func (h *Handler) WebSocketEndpoint(c *gin.Context) {
+	h.wsHub.HandleWebSocket(c.Writer, c.Request)
 }
 
 func CORSMiddleware() gin.HandlerFunc {
