@@ -36,8 +36,14 @@ func NewHandler(
 func (h *Handler) ListRules(c *gin.Context) {
 	var page models.Pagination
 	if err := c.ShouldBindQuery(&page); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+		page.Page = 1
+		page.PageSize = 20
+	}
+	if page.Page <= 0 {
+		page.Page = 1
+	}
+	if page.PageSize <= 0 {
+		page.PageSize = 20
 	}
 	search := c.Query("search")
 	var enabled *bool
@@ -47,7 +53,10 @@ func (h *Handler) ListRules(c *gin.Context) {
 	}
 	result, err := h.rules.List(page, search, enabled)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list rules",
+			"details": err.Error(),
+		})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -213,11 +222,16 @@ func (h *Handler) GetTrafficSeries(c *gin.Context) {
 
 	points, err := h.events.TrafficSeries(lastHours, intervalSec, apiPath, tenantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get traffic series",
+			"details": err.Error(),
+		})
 		return
 	}
+	if points == nil {
+		points = []models.TrafficPoint{}
+	}
 	c.JSON(http.StatusOK, points)
-}
 
 func (h *Handler) GetTenantShare(c *gin.Context) {
 	lastHours := 24

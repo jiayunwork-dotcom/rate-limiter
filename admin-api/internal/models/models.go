@@ -192,29 +192,29 @@ type QuotaTreeNode struct {
 
 type TrafficPoint struct {
 	Timestamp   time.Time `json:"timestamp"`
+	APIPath     string    `json:"apiPath"`
 	Allowed     int64     `json:"allowed"`
 	Rejected    int64     `json:"rejected"`
 	Total       int64     `json:"total"`
-	RejectRatio float64   `json:"reject_ratio"`
+	RejectRatio float64   `json:"rejectRatio"`
 }
 
 type TenantTrafficShare struct {
-	TenantID    string  `json:"tenant_id"`
-	TenantName  string  `json:"tenant_name"`
-	RequestCount int64   `json:"request_count"`
-	Percentage  float64 `json:"percentage"`
+	TenantID     string  `json:"tenantId"`
+	TenantName   string  `json:"tenantName"`
+	RequestCount int64   `json:"requestCount"`
+	Percentage   float64 `json:"percentage"`
 }
 
 type HeatmapPoint struct {
-	Hour      int `json:"hour"`
-	Minute    int `json:"minute"`
-	DayOfWeek int `json:"day_of_week"`
-	Count     int64 `json:"count"`
+	Hour    int   `json:"hour"`
+	Weekday int   `json:"weekday"`
+	Count   int64 `json:"count"`
 }
 
 type Pagination struct {
-	Page     int `json:"page" form:"page"`
-	PageSize int `json:"page_size" form:"page_size"`
+	Page     int `json:"page" form:"page" binding:"omitempty,min=1"`
+	PageSize int `json:"page_size" form:"page_size" binding:"omitempty,min=1,max=500"`
 }
 
 func (p Pagination) GetOffset() int {

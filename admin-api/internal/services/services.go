@@ -12,6 +12,8 @@ import (
 	"github.com/ratelimiter/admin-api/internal/repository"
 )
 
+type ctxKey string
+
 type RuleService struct {
 	ruleRepo *repository.RuleRepo
 	rdb      *redis.Client
@@ -36,14 +38,14 @@ func (s *RuleService) Create(rule *models.RateLimitRule) error {
 	if err := s.ruleRepo.Create(rule); err != nil {
 		return err
 	}
-	return s.broadcast(ctxKey("upsert"), rule)
+	return s.broadcast(rule)
 }
 
 func (s *RuleService) Update(rule *models.RateLimitRule) error {
 	if err := s.ruleRepo.Update(rule); err != nil {
 		return err
 	}
-	return s.broadcast(ctxKey("upsert"), rule)
+	return s.broadcast(rule)
 }
 
 func (s *RuleService) Delete(id string) error {
@@ -72,7 +74,7 @@ func (s *RuleService) Rollback(ruleID string, version int64) error {
 	if err != nil {
 		return err
 	}
-	return s.broadcast(ctxKey("upsert"), rule)
+	return s.broadcast(rule)
 }
 
 func (s *RuleService) BulkToggle(ids []string, enabled bool) error {
@@ -93,7 +95,7 @@ type changeMessage struct {
 	Timestamp time.Time            `json:"timestamp"`
 }
 
-func (s *RuleService) broadcast(_ ctxKey, rule *models.RateLimitRule) error {
+func (s *RuleService) broadcast(rule *models.RateLimitRule) error {
 	if s.rdb == nil {
 		return nil
 	}
@@ -132,8 +134,6 @@ func (s *RuleService) broadcastToggle(id string, enabled bool) error {
 	data, _ := json.Marshal(msg)
 	return s.rdb.Publish(context.Background(), "rl:rule:updates", data).Err()
 }
-
-type ctxKey string
 
 type EventService struct {
 	eventRepo *repository.EventRepo

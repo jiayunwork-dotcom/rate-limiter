@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ratelimiter_p@ssw0rd
       TZ: Asia/Shanghai
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./deployments/postgres/init.sql:/docker-entrypoint-initdb.d/1-init.sql:ro

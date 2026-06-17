@@ -308,11 +308,12 @@ func (e *EventRepo) TrafficSeries(startTime, endTime time.Time, intervalSec int,
 	sql := fmt.Sprintf(`
 		SELECT
 			to_timestamp(floor(extract(epoch FROM timestamp) / %d) * %d) AS bucket_ts,
+			COALESCE(api_path, 'unknown') AS api_path,
 			COUNT(*) FILTER (WHERE allowed = true) AS allowed,
 			COUNT(*) FILTER (WHERE allowed = false) AS rejected
 		FROM rate_limit_events
 		WHERE %s
-		GROUP BY bucket_ts
+		GROUP BY bucket_ts, api_path
 		ORDER BY bucket_ts ASC
 	`, intervalSec, intervalSec, whereSQL)
 
@@ -326,10 +327,11 @@ func (e *EventRepo) TrafficSeries(startTime, endTime time.Time, intervalSec int,
 	for rows.Next() {
 		var (
 			ts       time.Time
+			apiPath  string
 			allowed  int64
 			rejected int64
 		)
-		if err := rows.Scan(&ts, &allowed, &rejected); err != nil {
+		if err := rows.Scan(&ts, &apiPath, &allowed, &rejected); err != nil {
 			return nil, fmt.Errorf("traffic series scan failed: %w", err)
 		}
 		total := allowed + rejected
@@ -339,6 +341,7 @@ func (e *EventRepo) TrafficSeries(startTime, endTime time.Time, intervalSec int,
 		}
 		points = append(points, models.TrafficPoint{
 			Timestamp:   ts,
+			APIPath:     apiPath,
 			Allowed:     allowed,
 			Rejected:    rejected,
 			Total:       total,
@@ -410,12 +413,11 @@ func (e *EventRepo) Heatmap(startTime, endTime time.Time) ([]models.HeatmapPoint
 	sql := `
 		SELECT
 			CAST(EXTRACT(HOUR FROM timestamp) AS INTEGER) AS h,
-			CAST(EXTRACT(MINUTE FROM timestamp) AS INTEGER) / 5 * 5 AS m,
-			CAST(EXTRACT(ISODOW FROM timestamp) AS INTEGER) AS dow,
+			CAST(EXTRACT(DOW FROM timestamp) AS INTEGER) AS dow,
 			COUNT(*) AS cnt
 		FROM rate_limit_events
 		WHERE timestamp >= ? AND timestamp <= ?
-		GROUP BY 1, 2, 3
+		GROUP BY 1, 2
 	`
 	rows, err := e.db.Raw(sql, startTime, endTime).Rows()
 	if err != nil {
@@ -426,19 +428,17 @@ func (e *EventRepo) Heatmap(startTime, endTime time.Time) ([]models.HeatmapPoint
 	points := make([]models.HeatmapPoint, 0)
 	for rows.Next() {
 		var (
-			hour      int
-			minute    int
-			dayOfWeek int
-			count     int64
+			hour    int
+			weekday int
+			count   int64
 		)
-		if err := rows.Scan(&hour, &minute, &dayOfWeek, &count); err != nil {
+		if err := rows.Scan(&hour, &weekday, &count); err != nil {
 			return nil, fmt.Errorf("heatmap scan failed: %w", err)
 		}
 		points = append(points, models.HeatmapPoint{
-			Hour:      hour,
-			Minute:    minute,
-			DayOfWeek: dayOfWeek,
-			Count:     count,
+			Hour:    hour,
+			Weekday: weekday,
+			Count:   count,
 		})
 	}
 	if err := rows.Err(); err != nil {
