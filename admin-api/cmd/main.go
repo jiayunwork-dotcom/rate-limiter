@@ -241,6 +241,7 @@ func main() {
 		auditLogs := api.Group("/audit-logs")
 		{
 			auditLogs.GET("", h.ListAuditLogs)
+			auditLogs.GET("/export", h.ExportAuditLogs)
 			auditLogs.GET("/stats", h.GetAuditStats)
 			auditLogs.GET("/operators", h.ListAuditOperators)
 			auditLogs.GET("/timeline", h.GetAuditTimeline)

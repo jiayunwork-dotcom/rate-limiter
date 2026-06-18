@@ -351,4 +351,24 @@ export class ApiService {
   rollbackAuditOperation(id: number): Observable<any> {
     return this.http.post<any>(`${this.baseUrl}/audit-logs/${id}/rollback`, {});
   }
+
+  exportAuditLogsCsv(params?: {
+    operator?: string;
+    resourceType?: AuditResourceType;
+    resourceId?: string;
+    operationType?: AuditOperationType;
+    startTime?: string;
+    endTime?: string;
+  }): Observable<Blob> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && String(v) !== '') httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get(`${this.baseUrl}/audit-logs/export`, {
+      params: httpParams,
+      responseType: 'blob'
+    });
+  }
 }

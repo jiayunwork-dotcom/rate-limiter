@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -995,6 +996,42 @@ func (h *Handler) RollbackAuditOperation(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "rolled_back"})
+}
+
+func (h *Handler) ExportAuditLogs(c *gin.Context) {
+	var query models.AuditLogQuery
+	query.Page = 1
+	query.PageSize = 0
+
+	query.Operator = c.Query("operator")
+	query.ResourceType = models.AuditResourceType(c.Query("resource_type"))
+	query.ResourceID = c.Query("resource_id")
+	query.OperationType = models.AuditOperationType(c.Query("operation_type"))
+
+	if s := c.Query("start_time"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			query.StartTime = &t
+		}
+	}
+	if e := c.Query("end_time"); e != "" {
+		if t, err := time.Parse(time.RFC3339, e); err == nil {
+			query.EndTime = &t
+		}
+	}
+
+	csvData, err := h.audit.ExportCSV(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to export audit logs",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	filename := fmt.Sprintf("audit-logs-%s.csv", time.Now().Format("2006-01-02"))
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	c.Data(http.StatusOK, "text/csv; charset=utf-8", csvData)
 }
 
 type AuditMiddleware struct {

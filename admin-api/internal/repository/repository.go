@@ -1420,6 +1420,32 @@ func (r *AuditRepo) List(query models.AuditLogQuery) (*models.PaginatedResult, e
 	}, nil
 }
 
+func (r *AuditRepo) ListAll(query models.AuditLogQuery) ([]models.AuditLog, error) {
+	q := r.db.Model(&models.AuditLog{})
+	if query.Operator != "" {
+		q = q.Where("operator = ?", query.Operator)
+	}
+	if query.ResourceType != "" {
+		q = q.Where("resource_type = ?", query.ResourceType)
+	}
+	if query.ResourceID != "" {
+		q = q.Where("resource_id = ?", query.ResourceID)
+	}
+	if query.OperationType != "" {
+		q = q.Where("operation_type = ?", query.OperationType)
+	}
+	if query.StartTime != nil {
+		q = q.Where("created_at >= ?", *query.StartTime)
+	}
+	if query.EndTime != nil {
+		q = q.Where("created_at <= ?", *query.EndTime)
+	}
+
+	var logs []models.AuditLog
+	err := q.Order("created_at DESC").Find(&logs).Error
+	return logs, err
+}
+
 func (r *AuditRepo) Get(id int64) (*models.AuditLog, error) {
 	var log models.AuditLog
 	err := r.db.Where("id = ?", id).First(&log).Error

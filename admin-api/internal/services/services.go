@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1600,6 +1601,53 @@ func computeDiff(before, after interface{}) map[string]models.DiffField {
 
 func (s *AuditService) List(query models.AuditLogQuery) (*models.PaginatedResult, error) {
 	return s.auditRepo.List(query)
+}
+
+func (s *AuditService) ExportCSV(query models.AuditLogQuery) ([]byte, error) {
+	logs, err := s.auditRepo.ListAll(query)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("\xEF\xBB\xBF")
+	buf.WriteString("时间,操作人,操作类型,资源类型,资源ID,变更字段列表\n")
+
+	for _, log := range logs {
+		var diffFields []string
+		if len(log.DiffSummary) > 0 {
+			var diffMap map[string]interface{}
+			if err := json.Unmarshal(log.DiffSummary, &diffMap); err == nil {
+				for k := range diffMap {
+					diffFields = append(diffFields, k)
+				}
+			}
+		}
+
+		createdAt := log.CreatedAt.Format("2006-01-02 15:04:05")
+		opType := string(log.OperationType)
+		resType := string(log.ResourceType)
+		fields := strings.Join(diffFields, ",")
+
+		row := fmt.Sprintf("%s,%s,%s,%s,%s,%s\n",
+			csvEscape(createdAt),
+			csvEscape(log.Operator),
+			csvEscape(opType),
+			csvEscape(resType),
+			csvEscape(log.ResourceID),
+			csvEscape(fields),
+		)
+		buf.WriteString(row)
+	}
+
+	return buf.Bytes(), nil
+}
+
+func csvEscape(s string) string {
+	if strings.Contains(s, ",") || strings.Contains(s, "\"") || strings.Contains(s, "\n") {
+		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+	}
+	return s
 }
 
 func (s *AuditService) Get(id int64) (*models.AuditLog, error) {

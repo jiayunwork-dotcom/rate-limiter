@@ -1,4 +1,4 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, OnInit, ViewChild, Inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatTableModule } from '@angular/material/table';
@@ -14,7 +14,11 @@ import { MatNativeDateModule } from '@angular/material/core';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatListModule } from '@angular/material/list';
 import { MatChipsModule } from '@angular/material/chips';
-import { MatDialogModule, MatDialog } from '@angular/material/dialog';
+import { MatDialogModule, MatDialog, MAT_DIALOG_DATA } from '@angular/material/dialog';
+import { MatAutocompleteModule } from '@angular/material/autocomplete';
+import { ReactiveFormsModule, FormControl } from '@angular/forms';
+import { Observable } from 'rxjs';
+import { map, startWith } from 'rxjs/operators';
 import {
   AuditLog, AuditStats, AuditOperationType, AuditResourceType,
   TimelineNode, PaginatedAuditLogResult, DiffField
@@ -25,11 +29,11 @@ import { ApiService } from '../../services/api.service';
   selector: 'app-audit-log',
   standalone: true,
   imports: [
-    CommonModule, FormsModule,
+    CommonModule, FormsModule, ReactiveFormsModule,
     MatTableModule, MatInputModule, MatSelectModule, MatButtonModule,
     MatPaginatorModule, MatIconModule, MatCardModule, MatFormFieldModule,
     MatDatepickerModule, MatNativeDateModule, MatSidenavModule,
-    MatListModule, MatChipsModule, MatDialogModule
+    MatListModule, MatChipsModule, MatDialogModule, MatAutocompleteModule
   ],
   template: `
     <div class="page-header">
@@ -37,6 +41,9 @@ import { ApiService } from '../../services/api.service';
       <div class="header-actions">
         <button mat-stroked-button (click)="loadData()">
           <mat-icon>refresh</mat-icon>刷新
+        </button>
+        <button mat-stroked-button color="primary" (click)="exportCsv()" [disabled]="exporting">
+          <mat-icon>download</mat-icon>{{ exporting ? '导出中...' : '导出CSV' }}
         </button>
       </div>
     </div>
@@ -66,10 +73,16 @@ import { ApiService } from '../../services/api.service';
       <div class="filter-bar">
         <mat-form-field appearance="outline" class="filter-field">
           <mat-label>操作人</mat-label>
-          <mat-select [(ngModel)]="filter.operator" (selectionChange)="loadData()">
-            <mat-option value="">全部</mat-option>
-            <mat-option *ngFor="let op of operators" [value]="op">{{ op }}</mat-option>
-          </mat-select>
+          <input matInput
+            [formControl]="operatorFilterCtrl"
+            [matAutocomplete]="operatorAuto"
+            placeholder="输入或选择操作人" />
+          <mat-autocomplete #operatorAuto="matAutocomplete"
+            (optionSelected)="onOperatorSelected($event)">
+            <mat-option *ngFor="let op of filteredOperators$ | async" [value]="op">
+              {{ op }}
+            </mat-option>
+          </mat-autocomplete>
         </mat-form-field>
         <mat-form-field appearance="outline" class="filter-field">
           <mat-label>资源类型</mat-label>
@@ -153,12 +166,49 @@ import { ApiService } from '../../services/api.service';
                 <span class="diff-title">变更详情</span>
               </div>
               <div class="diff-table">
-                <div class="diff-row" *ngFor="let field of getDiffFields(row.diffSummary)">
-                  <div class="diff-field-name">{{ field.name }}</div>
-                  <div class="diff-old-value">{{ formatValue(field.oldValue) }}</div>
-                  <div class="diff-arrow">→</div>
-                  <div class="diff-new-value">{{ formatValue(field.newValue) }}</div>
-                </div>
+                <ng-container *ngFor="let item of getRecursiveDiffFields(row.diffSummary, row.operationType)">
+                  <ng-container *ngIf="item.isLeaf; else nestedGroup">
+                    <div class="diff-row" [ngClass]="{
+                      'diff-row-create': row.operationType === 'create',
+                      'diff-row-delete': row.operationType === 'delete'
+                    }">
+                      <div class="diff-field-name">{{ item.path }}</div>
+                      <ng-container *ngIf="row.operationType !== 'create'">
+                        <div class="diff-old-value">{{ formatValue(item.oldValue) }}</div>
+                        <div class="diff-arrow">→</div>
+                      </ng-container>
+                      <ng-container *ngIf="row.operationType === 'create'">
+                        <div class="diff-new-value diff-new-only">{{ formatValue(item.newValue) }}</div>
+                      </ng-container>
+                      <ng-container *ngIf="row.operationType !== 'create'">
+                        <div class="diff-new-value">{{ formatValue(item.newValue) }}</div>
+                      </ng-container>
+                    </div>
+                  </ng-container>
+                  <ng-template #nestedGroup>
+                    <div class="diff-nested-group">
+                      <div class="diff-nested-header">{{ item.path }}</div>
+                      <ng-container *ngFor="let child of item.children">
+                        <div class="diff-row diff-row-nested" [ngClass]="{
+                          'diff-row-create': row.operationType === 'create',
+                          'diff-row-delete': row.operationType === 'delete'
+                        }">
+                          <div class="diff-field-name">{{ child.path }}</div>
+                          <ng-container *ngIf="row.operationType !== 'create'">
+                            <div class="diff-old-value">{{ formatValue(child.oldValue) }}</div>
+                            <div class="diff-arrow">→</div>
+                          </ng-container>
+                          <ng-container *ngIf="row.operationType === 'create'">
+                            <div class="diff-new-value diff-new-only">{{ formatValue(child.newValue) }}</div>
+                          </ng-container>
+                          <ng-container *ngIf="row.operationType !== 'create'">
+                            <div class="diff-new-value">{{ formatValue(child.newValue) }}</div>
+                          </ng-container>
+                        </div>
+                      </ng-container>
+                    </div>
+                  </ng-template>
+                </ng-container>
               </div>
             </div>
           </td>
@@ -372,6 +422,15 @@ import { ApiService } from '../../services/api.service';
       border-radius: 4px;
       border: 1px solid #e0e0e0;
     }
+    .diff-row-create {
+      grid-template-columns: 180px 1fr;
+    }
+    .diff-row-delete {
+      grid-template-columns: 180px 1fr;
+    }
+    .diff-row-nested {
+      margin-left: 16px;
+    }
     .diff-field-name {
       font-weight: 500;
       color: #333;
@@ -398,6 +457,22 @@ import { ApiService } from '../../services/api.service';
       color: #2e7d32;
       font-family: monospace;
       word-break: break-all;
+    }
+    .diff-new-only {
+      background: #c8e6c9;
+      font-weight: 500;
+    }
+    .diff-nested-group {
+      margin-bottom: 4px;
+    }
+    .diff-nested-header {
+      font-weight: 600;
+      font-size: 13px;
+      color: #555;
+      padding: 4px 12px;
+      background: #e3f2fd;
+      border-radius: 4px;
+      margin-bottom: 4px;
     }
     .timeline-container {
       position: fixed;
@@ -513,6 +588,52 @@ import { ApiService } from '../../services/api.service';
     .rollback-btn {
       font-size: 12px;
     }
+    .rollback-dialog-content {
+      min-width: 400px;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+    .rollback-preview-row {
+      display: grid;
+      grid-template-columns: 140px 1fr 30px 1fr;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 8px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .rollback-preview-field {
+      font-weight: 500;
+      font-size: 13px;
+      color: #333;
+    }
+    .rollback-preview-old {
+      background: #ffebee;
+      padding: 3px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      color: #c62828;
+      font-family: monospace;
+      word-break: break-all;
+    }
+    .rollback-preview-arrow {
+      text-align: center;
+      color: #999;
+    }
+    .rollback-preview-new {
+      background: #e8f5e9;
+      padding: 3px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      color: #2e7d32;
+      font-family: monospace;
+      word-break: break-all;
+    }
+    .rollback-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 0 0;
+    }
   `]
 })
 export class AuditLogComponent implements OnInit {
@@ -524,6 +645,10 @@ export class AuditLogComponent implements OnInit {
   operators: string[] = [];
   stats: AuditStats = {} as AuditStats;
   expandedRows: Set<number> = new Set();
+  exporting = false;
+
+  operatorFilterCtrl = new FormControl('');
+  filteredOperators$!: Observable<string[]>;
 
   isExpansionDetailRow = (i: number, row: Object) => row.hasOwnProperty('detailRow');
 
@@ -550,6 +675,27 @@ export class AuditLogComponent implements OnInit {
   ngOnInit(): void {
     this.loadStats();
     this.loadOperators();
+    this.loadData();
+
+    this.filteredOperators$ = this.operatorFilterCtrl.valueChanges.pipe(
+      startWith(''),
+      map(value => {
+        const term = (value || '').toLowerCase();
+        const allOptions = ['全部', ...this.operators];
+        if (!term) return allOptions;
+        const filtered = this.operators.filter(op => op.toLowerCase().includes(term));
+        return ['全部', ...filtered];
+      })
+    );
+  }
+
+  onOperatorSelected(event: any): void {
+    const value = event.option.value;
+    if (value === '全部') {
+      this.filter.operator = '';
+    } else {
+      this.filter.operator = value;
+    }
     this.loadData();
   }
 
@@ -612,6 +758,59 @@ export class AuditLogComponent implements OnInit {
     }));
   }
 
+  getRecursiveDiffFields(diffSummary: Record<string, DiffField>, operationType?: string): DiffViewItem[] {
+    if (!diffSummary) return [];
+    const result: DiffViewItem[] = [];
+    for (const [name, field] of Object.entries(diffSummary)) {
+      result.push(...this.buildDiffViewItems(name, field, operationType));
+    }
+    return result;
+  }
+
+  private buildDiffViewItems(name: string, field: DiffField, operationType?: string): DiffViewItem[] {
+    const oldIsObj = this.isObject(field.oldValue);
+    const newIsObj = this.isObject(field.newValue);
+
+    if ((oldIsObj || newIsObj) && operationType !== 'create' && operationType !== 'delete') {
+      const oldMap = (oldIsObj ? field.oldValue : {}) as Record<string, any>;
+      const newMap = (newIsObj ? field.newValue : {}) as Record<string, any>;
+      const children: DiffViewItem[] = [];
+      const allKeys = new Set([...Object.keys(oldMap), ...Object.keys(newMap)]);
+      for (const key of allKeys) {
+        const ov = key in oldMap ? oldMap[key] : null;
+        const nv = key in newMap ? newMap[key] : null;
+        const ovIsObj = this.isObject(ov);
+        const nvIsObj = this.isObject(nv);
+        if (ovIsObj || nvIsObj) {
+          const nestedDiff: DiffField = { oldValue: ov, newValue: nv };
+          children.push(...this.buildDiffViewItems(key, nestedDiff, operationType));
+        } else {
+          children.push({
+            isLeaf: true,
+            path: key,
+            oldValue: ov,
+            newValue: nv
+          });
+        }
+      }
+      if (children.length > 0) {
+        return [{ isLeaf: false, path: name, children }];
+      }
+    }
+
+    if (operationType === 'delete') {
+      return [{ isLeaf: true, path: name, oldValue: field.oldValue, newValue: null }];
+    }
+    if (operationType === 'create') {
+      return [{ isLeaf: true, path: name, oldValue: null, newValue: field.newValue }];
+    }
+    return [{ isLeaf: true, path: name, oldValue: field.oldValue, newValue: field.newValue }];
+  }
+
+  private isObject(val: any): boolean {
+    return val !== null && val !== undefined && typeof val === 'object' && !Array.isArray(val);
+  }
+
   getDiffSummaryText(diffSummary: Record<string, DiffField>): string {
     if (!diffSummary) return '';
     const keys = Object.keys(diffSummary);
@@ -671,19 +870,160 @@ export class AuditLogComponent implements OnInit {
   }
 
   confirmRollback(node: TimelineNode): void {
-    if (confirm(`确定要回滚此操作吗？\n操作类型: ${this.getOperationTypeLabel(node.operationType)}\n操作人: ${node.operator}`)) {
-      this.api.rollbackAuditOperation(node.id).subscribe(() => {
-        alert('回滚成功');
-        this.loadData();
-        this.loadStats();
-        if (this.selectedResourceId) {
-          this.api.getAuditTimeline(this.selectedResourceId).subscribe(nodes => {
-            this.timelineNodes = nodes;
-          }, () => {});
-        }
-      }, err => {
-        alert('回滚失败: ' + (err.error?.message || err.message));
-      });
+    const diffFields = this.getDiffFields(node.diffSummary);
+    const dialogRef = this.dialog.open(RollbackConfirmDialog, {
+      width: '560px',
+      data: {
+        operationType: node.operationType,
+        operator: node.operator,
+        diffFields: diffFields
+      }
+    });
+
+    dialogRef.afterClosed().subscribe(confirmed => {
+      if (confirmed) {
+        this.api.rollbackAuditOperation(node.id).subscribe(() => {
+          this.loadData();
+          this.loadStats();
+          if (this.selectedResourceId) {
+            this.api.getAuditTimeline(this.selectedResourceId).subscribe(nodes => {
+              this.timelineNodes = nodes;
+            }, () => {});
+          }
+        }, err => {
+          alert('回滚失败: ' + (err.error?.message || err.message));
+        });
+      }
+    });
+  }
+
+  exportCsv(): void {
+    this.exporting = true;
+    this.api.exportAuditLogsCsv().subscribe({
+      next: (blob: Blob) => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `audit-logs-${new Date().toISOString().slice(0,10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        this.exporting = false;
+      },
+      error: () => {
+        this.exporting = false;
+        alert('导出失败，请重试');
+      }
+    });
+  }
+}
+
+interface DiffViewItem {
+  isLeaf: boolean;
+  path: string;
+  oldValue?: any;
+  newValue?: any;
+  children?: DiffViewItem[];
+}
+
+@Component({
+  selector: 'rollback-confirm-dialog',
+  standalone: true,
+  imports: [CommonModule, MatButtonModule, MatDialogModule, MatIconModule],
+  template: `
+    <h2 mat-dialog-title>确认回滚操作</h2>
+    <mat-dialog-content class="rollback-dialog-content">
+      <p style="margin-bottom:12px;color:#666;">
+        即将回滚操作人 <strong>{{ data.operator }}</strong> 的
+        <strong>{{ getOperationTypeLabel(data.operationType) }}</strong> 操作，以下字段将恢复到变更前的值：
+      </p>
+      <div class="rollback-preview-header" style="display:grid;grid-template-columns:140px 1fr 30px 1fr;gap:8px;padding:8px;background:#f5f5f5;border-radius:4px;margin-bottom:8px;">
+        <span style="font-weight:600;font-size:12px;color:#666;">字段</span>
+        <span style="font-weight:600;font-size:12px;color:#c62828;">当前值(将恢复)</span>
+        <span></span>
+        <span style="font-weight:600;font-size:12px;color:#2e7d32;">恢复后的值</span>
+      </div>
+      <div *ngFor="let field of data.diffFields" class="rollback-preview-row">
+        <div class="rollback-preview-field">{{ field.name }}</div>
+        <div class="rollback-preview-old">{{ formatValue(field.newValue) }}</div>
+        <div class="rollback-preview-arrow">→</div>
+        <div class="rollback-preview-new">{{ formatValue(field.oldValue) }}</div>
+      </div>
+    </mat-dialog-content>
+    <mat-dialog-actions class="rollback-dialog-actions">
+      <button mat-button mat-dialog-close>取消</button>
+      <button mat-raised-button color="warn" [mat-dialog-close]="true">
+        <mat-icon>undo</mat-icon>确认回滚
+      </button>
+    </mat-dialog-actions>
+  `,
+  styles: [`
+    .rollback-dialog-content {
+      min-width: 400px;
+      max-height: 60vh;
+      overflow-y: auto;
     }
+    .rollback-preview-row {
+      display: grid;
+      grid-template-columns: 140px 1fr 30px 1fr;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 8px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .rollback-preview-field {
+      font-weight: 500;
+      font-size: 13px;
+      color: #333;
+    }
+    .rollback-preview-old {
+      background: #ffebee;
+      padding: 3px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      color: #c62828;
+      font-family: monospace;
+      word-break: break-all;
+    }
+    .rollback-preview-arrow {
+      text-align: center;
+      color: #999;
+    }
+    .rollback-preview-new {
+      background: #e8f5e9;
+      padding: 3px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      color: #2e7d32;
+      font-family: monospace;
+      word-break: break-all;
+    }
+    .rollback-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 0 0;
+    }
+  `]
+})
+export class RollbackConfirmDialog {
+  constructor(@Inject(MAT_DIALOG_DATA) public data: any) {}
+
+  getOperationTypeLabel(type: string): string {
+    const map: Record<string, string> = {
+      create: '创建',
+      update: '更新',
+      delete: '删除',
+      toggle: '开关',
+      rollback: '回滚'
+    };
+    return map[type] || type;
+  }
+
+  formatValue(value: any): string {
+    if (value === null || value === undefined) return '-';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
   }
 }
