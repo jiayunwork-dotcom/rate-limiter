@@ -217,14 +217,8 @@ func main() {
 
 func autoMigrateDB(db *gorm.DB) error {
 	err := db.AutoMigrate(
-		&models.RateLimitRule{},
-		&models.RuleVersion{},
-		&models.QuotaConfig{},
-		&models.RateLimitEvent{},
-		&models.Tenant{},
 		&models.AlertRule{},
 		&models.AlertEvent{},
-		&models.RuleTemplate{},
 	)
 	if err != nil {
 		return err

@@ -54,12 +54,12 @@ type RateLimitRule struct {
 	Version           int64             `json:"version" gorm:"column:version"`
 	Limit             int64             `json:"limit" gorm:"column:limit_count"`
 	WindowSeconds     int64             `json:"windowSeconds" gorm:"column:window_seconds"`
-	DimensionsJSON    json.RawMessage   `json:"-" gorm:"column:dimensions"`
-	TokenBucketJSON   *json.RawMessage  `json:"-" gorm:"column:token_bucket_config"`
-	LeakyBucketJSON   *json.RawMessage  `json:"-" gorm:"column:leaky_bucket_config"`
-	ShapingJSON       *json.RawMessage  `json:"-" gorm:"column:shaping_config"`
-	GrayReleaseJSON   *json.RawMessage  `json:"-" gorm:"column:gray_release_config"`
-	ConfigJSON        json.RawMessage   `json:"-" gorm:"column:config_json"`
+	DimensionsJSON    json.RawMessage   `json:"-" gorm:"column:dimensions;type:jsonb"`
+	TokenBucketJSON   *json.RawMessage  `json:"-" gorm:"column:token_bucket_config;type:jsonb"`
+	LeakyBucketJSON   *json.RawMessage  `json:"-" gorm:"column:leaky_bucket_config;type:jsonb"`
+	ShapingJSON       *json.RawMessage  `json:"-" gorm:"column:shaping_config;type:jsonb"`
+	GrayReleaseJSON   *json.RawMessage  `json:"-" gorm:"column:gray_release_config;type:jsonb"`
+	ConfigJSON        json.RawMessage   `json:"-" gorm:"column:config_json;type:jsonb"`
 	Dimensions        *RuleDimensions     `json:"dimensions" gorm:"-"`
 	TokenBucketConfig *TokenBucketConfig  `json:"tokenBucketConfig,omitempty" gorm:"-"`
 	LeakyBucketConfig *LeakyBucketConfig  `json:"leakyBucketConfig,omitempty" gorm:"-"`
@@ -77,7 +77,7 @@ type RuleVersion struct {
 	ID         int64           `json:"id" gorm:"column:id;primaryKey"`
 	RuleID     string          `json:"rule_id" gorm:"column:rule_id"`
 	Version    int64           `json:"version" gorm:"column:version"`
-	ConfigJSON json.RawMessage `json:"config_json" gorm:"column:config_json"`
+	ConfigJSON json.RawMessage `json:"config_json" gorm:"column:config_json;type:jsonb"`
 	CreatedAt  time.Time       `json:"created_at" gorm:"column:created_at"`
 }
 
@@ -263,9 +263,9 @@ type RuleTemplate struct {
 	Algorithm         AlgorithmType     `json:"algorithm" gorm:"column:algorithm"`
 	Limit             int64             `json:"limit" gorm:"column:limit_count"`
 	WindowSeconds     int64             `json:"windowSeconds" gorm:"column:window_seconds"`
-	TokenBucketJSON   *json.RawMessage  `json:"-" gorm:"column:token_bucket_config"`
-	LeakyBucketJSON   *json.RawMessage  `json:"-" gorm:"column:leaky_bucket_config"`
-	ShapingJSON       *json.RawMessage  `json:"-" gorm:"column:shaping_config"`
+	TokenBucketJSON   *json.RawMessage  `json:"-" gorm:"column:token_bucket_config;type:jsonb"`
+	LeakyBucketJSON   *json.RawMessage  `json:"-" gorm:"column:leaky_bucket_config;type:jsonb"`
+	ShapingJSON       *json.RawMessage  `json:"-" gorm:"column:shaping_config;type:jsonb"`
 	TokenBucketConfig *TokenBucketConfig `json:"tokenBucketConfig,omitempty" gorm:"-"`
 	LeakyBucketConfig *LeakyBucketConfig `json:"leakyBucketConfig,omitempty" gorm:"-"`
 	ShapingConfig     *ShapingConfig     `json:"shapingConfig,omitempty" gorm:"-"`
@@ -335,8 +335,8 @@ type AlertRule struct {
 	ThresholdTriggerConfig *ThresholdTriggerConfig `json:"thresholdConfig,omitempty" gorm:"-"`
 	RateTriggerConfig      *RateTriggerConfig      `json:"rateConfig,omitempty" gorm:"-"`
 	DurationTriggerConfig  *DurationTriggerConfig  `json:"durationConfig,omitempty" gorm:"-"`
-	CreatedAt              time.Time         `json:"createdAt" gorm:"column:created_at"`
-	UpdatedAt              time.Time         `json:"updatedAt" gorm:"column:updated_at"`
+	CreatedAt              time.Time         `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt              time.Time         `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (AlertRule) TableName() string {
@@ -358,10 +358,10 @@ type AlertEvent struct {
 	AcknowledgedAt    *time.Time      `json:"acknowledgedAt,omitempty" gorm:"column:acknowledged_at"`
 	ResolvedAt        *time.Time      `json:"resolvedAt,omitempty" gorm:"column:resolved_at"`
 	ExpiredAt         *time.Time      `json:"expiredAt,omitempty" gorm:"column:expired_at"`
-	FiringStartedAt   time.Time       `json:"firingStartedAt" gorm:"column:firing_started_at"`
-	LastFiringAt      time.Time       `json:"lastFiringAt" gorm:"column:last_firing_at"`
-	CreatedAt         time.Time       `json:"createdAt" gorm:"column:created_at"`
-	UpdatedAt         time.Time       `json:"updatedAt" gorm:"column:updated_at"`
+	FiringStartedAt   time.Time       `json:"firingStartedAt" gorm:"column:firing_started_at;default:now()"`
+	LastFiringAt      time.Time       `json:"lastFiringAt" gorm:"column:last_firing_at;default:now()"`
+	CreatedAt         time.Time       `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt         time.Time       `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (AlertEvent) TableName() string {

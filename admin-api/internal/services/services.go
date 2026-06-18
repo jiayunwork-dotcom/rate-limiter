@@ -762,6 +762,7 @@ func (e *AlertEngineService) evaluateThresholdRule(rule *models.AlertRule) {
 			active, _ := e.alertEventRepo.FindActiveByRuleAndDimension(rule.ID, dimType, dimValue)
 
 			if active == nil {
+				now := time.Now()
 				event := &models.AlertEvent{
 					AlertRuleID:    rule.ID,
 					RuleName:       rule.Name,
@@ -771,6 +772,8 @@ func (e *AlertEngineService) evaluateThresholdRule(rule *models.AlertRule) {
 					DimensionValue: dimValue,
 					CurrentValue:   float64(count),
 					ThresholdValue: threshold,
+					FiringStartedAt: now,
+					LastFiringAt:    now,
 					TriggerSnapshot: e.buildSnapshot(map[string]interface{}{
 						"windowSeconds": cfg.WindowSeconds,
 						"metric":        cfg.Metric,
@@ -778,7 +781,7 @@ func (e *AlertEngineService) evaluateThresholdRule(rule *models.AlertRule) {
 					}),
 				}
 				_ = e.eventSvc.Create(event)
-				e.lastFired["rule:"+rule.ID] = time.Now()
+				e.lastFired["rule:"+rule.ID] = now
 			} else {
 				active.CurrentValue = float64(count)
 				active.LastFiringAt = time.Now()
@@ -811,6 +814,7 @@ func (e *AlertEngineService) evaluateRateRule(rule *models.AlertRule) {
 			active, _ := e.alertEventRepo.FindActiveByRuleAndDimension(rule.ID, dimType, dimValue)
 
 			if active == nil {
+				now := time.Now()
 				event := &models.AlertEvent{
 					AlertRuleID:    rule.ID,
 					RuleName:       rule.Name,
@@ -820,6 +824,8 @@ func (e *AlertEngineService) evaluateRateRule(rule *models.AlertRule) {
 					DimensionValue: dimValue,
 					CurrentValue:   rejectRate,
 					ThresholdValue: cfg.ThresholdPercent,
+					FiringStartedAt: now,
+					LastFiringAt:    now,
 					TriggerSnapshot: e.buildSnapshot(map[string]interface{}{
 						"windowSeconds":    cfg.WindowSeconds,
 						"metric":           cfg.Metric,
@@ -829,7 +835,7 @@ func (e *AlertEngineService) evaluateRateRule(rule *models.AlertRule) {
 					}),
 				}
 				_ = e.eventSvc.Create(event)
-				e.lastFired["rule:"+rule.ID] = time.Now()
+				e.lastFired["rule:"+rule.ID] = now
 			} else {
 				active.CurrentValue = rejectRate
 				active.LastFiringAt = time.Now()
@@ -857,6 +863,7 @@ func (e *AlertEngineService) evaluateDurationRule(rule *models.AlertRule) {
 			active, _ := e.alertEventRepo.FindActiveByRuleAndDimension(rule.ID, dimType, dimValue)
 
 			if active == nil {
+				now := time.Now()
 				event := &models.AlertEvent{
 					AlertRuleID:    rule.ID,
 					RuleName:       rule.Name,
@@ -866,13 +873,15 @@ func (e *AlertEngineService) evaluateDurationRule(rule *models.AlertRule) {
 					DimensionValue: dimValue,
 					CurrentValue:   float64(cfg.DurationSeconds),
 					ThresholdValue: float64(cfg.DurationSeconds),
+					FiringStartedAt: now,
+					LastFiringAt:    now,
 					TriggerSnapshot: e.buildSnapshot(map[string]interface{}{
 						"durationSeconds": cfg.DurationSeconds,
 						"metric":          cfg.Metric,
 					}),
 				}
 				_ = e.eventSvc.Create(event)
-				e.lastFired["rule:"+rule.ID] = time.Now()
+				e.lastFired["rule:"+rule.ID] = now
 			} else {
 				active.LastFiringAt = time.Now()
 				_ = e.alertEventRepo.Update(active)
