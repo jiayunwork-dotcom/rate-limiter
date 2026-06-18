@@ -251,15 +251,18 @@ func autoMigrateDB(db *gorm.DB) error {
 	initAlertRules := []models.AlertRule{
 		{
 			ID:                   "rule-api-high-reject",
-			Name:                   "API高拒绝率告警",
-			Description:            "当某个API的拒绝次数在60秒内超过100次时触发告警",
-			Severity:               models.SeverityCritical,
-			Enabled:                true,
-			TriggerType:            models.TriggerTypeThreshold,
-			TriggerConfigJSON:      []byte(`{"windowSeconds": 60, "threshold": 100, "metric": "reject_count"}`),
-			ScopeType:              models.ScopeGlobal,
-			SilentPeriodSeconds:    300,
-			RetentionHours:         168,
+			Name:                 "API高拒绝率告警",
+			Description:          "当某个API的拒绝次数在60秒内超过100次时触发告警",
+			Severity:             models.SeverityCritical,
+			Enabled:              true,
+			TriggerType:          models.TriggerTypeThreshold,
+			TriggerConfigJSON:    []byte(`{"windowSeconds": 60, "threshold": 100, "metric": "reject_count"}`),
+			ScopeType:            models.ScopeGlobal,
+			NotificationJSON:     []byte(`[]`),
+			SilentPeriodSeconds:  300,
+			RetentionHours:       168,
+			CreatedAt:            time.Now(),
+			UpdatedAt:            time.Now(),
 		},
 		{
 			ID:                   "rule-tenant-reject-rate",
@@ -270,15 +273,18 @@ func autoMigrateDB(db *gorm.DB) error {
 			TriggerType:          models.TriggerTypeRate,
 			TriggerConfigJSON:    []byte(`{"windowSeconds": 300, "thresholdPercent": 20, "metric": "reject_rate"}`),
 			ScopeType:            models.ScopeGlobal,
+			NotificationJSON:     []byte(`[]`),
 			SilentPeriodSeconds:  600,
 			RetentionHours:       168,
+			CreatedAt:            time.Now(),
+			UpdatedAt:            time.Now(),
 		},
 	}
 
 	for _, rule := range initAlertRules {
-		var existing models.AlertRule
-		result := db.Where("id = ?", rule.ID).First(&existing)
-		if result.Error == gorm.ErrRecordNotFound {
+		var count int64
+		db.Model(&models.AlertRule{}).Where("id = ?", rule.ID).Count(&count)
+		if count == 0 {
 			if err := db.Create(&rule).Error; err != nil {
 				log.Printf("Warning: failed to create alert rule %s: %v", rule.ID, err)
 			}

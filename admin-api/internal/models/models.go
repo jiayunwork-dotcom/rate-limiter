@@ -319,17 +319,17 @@ type DurationTriggerConfig struct {
 }
 
 type AlertRule struct {
-	ID                     string            `json:"id" gorm:"column:id;primaryKey"`
-	Name                   string            `json:"name" gorm:"column:name"`
-	Description            string            `json:"description" gorm:"column:description"`
-	Severity               AlertSeverity     `json:"severity" gorm:"column:severity"`
+	ID                     string            `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	Name                   string            `json:"name" gorm:"column:name;type:varchar(255)"`
+	Description            string            `json:"description" gorm:"column:description;type:text"`
+	Severity               AlertSeverity     `json:"severity" gorm:"column:severity;type:varchar(16)"`
 	Enabled                bool              `json:"enabled" gorm:"column:enabled"`
-	TriggerType            AlertTriggerType  `json:"triggerType" gorm:"column:trigger_type"`
-	TriggerConfigJSON      json.RawMessage   `json:"-" gorm:"column:trigger_config"`
-	ScopeType              AlertScopeType    `json:"scopeType" gorm:"column:scope_type"`
-	ScopeValue             string            `json:"scopeValue,omitempty" gorm:"column:scope_value"`
+	TriggerType            AlertTriggerType  `json:"triggerType" gorm:"column:trigger_type;type:varchar(32)"`
+	TriggerConfigJSON      json.RawMessage   `json:"-" gorm:"column:trigger_config;type:jsonb"`
+	ScopeType              AlertScopeType    `json:"scopeType" gorm:"column:scope_type;type:varchar(16)"`
+	ScopeValue             string            `json:"scopeValue,omitempty" gorm:"column:scope_value;type:varchar(512)"`
 	NotificationChannels   []string          `json:"notificationChannels" gorm:"-"`
-	NotificationJSON       json.RawMessage   `json:"-" gorm:"column:notification_channels"`
+	NotificationJSON       json.RawMessage   `json:"-" gorm:"column:notification_channels;type:jsonb"`
 	SilentPeriodSeconds    int64             `json:"silentPeriodSeconds" gorm:"column:silent_period_seconds"`
 	RetentionHours         int64             `json:"retentionHours" gorm:"column:retention_hours"`
 	ThresholdTriggerConfig *ThresholdTriggerConfig `json:"thresholdConfig,omitempty" gorm:"-"`
@@ -345,16 +345,16 @@ func (AlertRule) TableName() string {
 
 type AlertEvent struct {
 	ID                int64           `json:"id" gorm:"column:id;primaryKey"`
-	AlertRuleID       string          `json:"alertRuleId" gorm:"column:alert_rule_id"`
-	RuleName          string          `json:"ruleName" gorm:"column:rule_name"`
-	Severity          AlertSeverity   `json:"severity" gorm:"column:severity"`
-	Status            AlertStatus     `json:"status" gorm:"column:status"`
-	DimensionType     string          `json:"dimensionType" gorm:"column:dimension_type"`
-	DimensionValue    string          `json:"dimensionValue" gorm:"column:dimension_value"`
+	AlertRuleID       string          `json:"alertRuleId" gorm:"column:alert_rule_id;type:varchar(64);index"`
+	RuleName          string          `json:"ruleName" gorm:"column:rule_name;type:varchar(255)"`
+	Severity          AlertSeverity   `json:"severity" gorm:"column:severity;type:varchar(16);index"`
+	Status            AlertStatus     `json:"status" gorm:"column:status;type:varchar(16);index"`
+	DimensionType     string          `json:"dimensionType" gorm:"column:dimension_type;type:varchar(32);index"`
+	DimensionValue    string          `json:"dimensionValue" gorm:"column:dimension_value;type:varchar(512);index"`
 	CurrentValue      float64         `json:"currentValue" gorm:"column:current_value"`
 	ThresholdValue    float64         `json:"thresholdValue" gorm:"column:threshold_value"`
-	TriggerSnapshot   json.RawMessage `json:"triggerSnapshot,omitempty" gorm:"column:trigger_snapshot"`
-	AcknowledgedBy    *string         `json:"acknowledgedBy,omitempty" gorm:"column:acknowledged_by"`
+	TriggerSnapshot   json.RawMessage `json:"triggerSnapshot,omitempty" gorm:"column:trigger_snapshot;type:jsonb"`
+	AcknowledgedBy    *string         `json:"acknowledgedBy,omitempty" gorm:"column:acknowledged_by;type:varchar(128)"`
 	AcknowledgedAt    *time.Time      `json:"acknowledgedAt,omitempty" gorm:"column:acknowledged_at"`
 	ResolvedAt        *time.Time      `json:"resolvedAt,omitempty" gorm:"column:resolved_at"`
 	ExpiredAt         *time.Time      `json:"expiredAt,omitempty" gorm:"column:expired_at"`

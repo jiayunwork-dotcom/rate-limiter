@@ -1020,23 +1020,74 @@ func (e *AlertEngineService) getRejectAndTotalByDimension(rule *models.AlertRule
 }
 
 func (e *AlertEngineService) hasContinuousRejections(rule *models.AlertRule, dimType, dimValue string, startTime, endTime time.Time) bool {
-	var count int64
-	var whereSQL string
-	var args []interface{}
-
-	switch dimType {
-	case "tenant_id":
-		whereSQL = "tenant_id = ? AND allowed = false AND timestamp >= ? AND timestamp <= ?"
-		args = []interface{}{dimValue, startTime, endTime}
-	default:
-		whereSQL = "api_path = ? AND allowed = false AND timestamp >= ? AND timestamp <= ?"
-		args = []interface{}{dimValue, startTime, endTime}
+	type rangeResult struct {
+		FirstTs time.Time
+		LastTs  time.Time
+		Count   int64
 	}
 
-	e.db.Model(&models.RateLimitEvent{}).
-		Where(whereSQL, args...).
-		Count(&count)
-	return count > 0
+	var dimColumn string
+	switch dimType {
+	case "tenant_id":
+		dimColumn = "tenant_id"
+	default:
+		dimColumn = "api_path"
+	}
+
+	var res rangeResult
+	sql := `SELECT MIN(timestamp) as first_ts, MAX(timestamp) as last_ts, COUNT(*) as count 
+	        FROM rate_limit_events 
+	        WHERE ` + dimColumn + ` = ? AND allowed = false AND timestamp >= ? AND timestamp <= ?`
+	e.db.Raw(sql, dimValue, startTime, endTime).Scan(&res)
+
+	totalWindow := endTime.Sub(startTime)
+	if totalWindow <= 0 {
+		return false
+	}
+
+	coverageThreshold := totalWindow * 7 / 10
+
+	if res.Count < 3 {
+		return false
+	}
+
+	coverage := res.LastTs.Sub(res.FirstTs)
+	if coverage < coverageThreshold {
+		return false
+	}
+
+	totalSeconds := int64(totalWindow.Seconds())
+	numBuckets := numBucketsForWindow(totalSeconds)
+	bucketSize := totalWindow / time.Duration(numBuckets)
+	coveredBuckets := 0
+
+	for i := int64(0); i < numBuckets; i++ {
+		bucketStart := startTime.Add(time.Duration(i) * bucketSize)
+		bucketEnd := bucketStart.Add(bucketSize)
+		var bucketCount int64
+		e.db.Model(&models.RateLimitEvent{}).
+			Where(dimColumn+" = ? AND allowed = false AND timestamp >= ? AND timestamp < ?",
+				dimValue, bucketStart, bucketEnd).
+			Count(&bucketCount)
+		if bucketCount > 0 {
+			coveredBuckets++
+		}
+	}
+
+	return coveredBuckets*10 >= int(numBuckets)*7
+}
+
+func numBucketsForWindow(totalSeconds int64) int64 {
+	if totalSeconds <= 30 {
+		return 6
+	}
+	if totalSeconds <= 60 {
+		return 10
+	}
+	if totalSeconds <= 300 {
+		return 15
+	}
+	return 20
 }
 
 func (e *AlertEngineService) buildSnapshot(data map[string]interface{}) json.RawMessage {
