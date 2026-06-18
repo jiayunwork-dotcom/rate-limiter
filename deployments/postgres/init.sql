@@ -341,3 +341,85 @@ INSERT INTO alert_rules (id, name, description, severity, trigger_type, trigger_
     600
 )
 ON CONFLICT DO NOTHING;
+
+ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS suppressed BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS suppressed_by_rule_id VARCHAR(64);
+CREATE INDEX IF NOT EXISTS idx_alert_events_suppressed ON alert_events(suppressed);
+
+CREATE TABLE IF NOT EXISTS alert_aggregation_rules (
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::VARCHAR,
+    name VARCHAR(255) NOT NULL,
+    dimension_type VARCHAR(32) NOT NULL,
+    window_seconds BIGINT NOT NULL DEFAULT 300,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_aggregation_rules_enabled ON alert_aggregation_rules(enabled);
+
+CREATE TRIGGER trg_update_alert_aggregation_rules_timestamp
+BEFORE UPDATE ON alert_aggregation_rules
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TABLE IF NOT EXISTS alert_suppression_rules (
+    id VARCHAR(64) PRIMARY KEY DEFAULT uuid_generate_v4()::VARCHAR,
+    name VARCHAR(255) NOT NULL,
+    source_severity VARCHAR(16) NOT NULL,
+    source_status VARCHAR(16) NOT NULL,
+    source_rule_id VARCHAR(64),
+    target_severity VARCHAR(16) NOT NULL,
+    target_dimension_type VARCHAR(32),
+    match_dimension_fields VARCHAR(512) NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_suppression_rules_enabled ON alert_suppression_rules(enabled);
+
+CREATE TRIGGER trg_update_alert_suppression_rules_timestamp
+BEFORE UPDATE ON alert_suppression_rules
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TABLE IF NOT EXISTS alert_aggregation_groups (
+    id BIGSERIAL PRIMARY KEY,
+    aggregation_rule_id VARCHAR(64) NOT NULL,
+    dimension_type VARCHAR(32) NOT NULL,
+    dimension_value VARCHAR(512) NOT NULL,
+    trigger_count BIGINT NOT NULL DEFAULT 1,
+    first_triggered_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    last_triggered_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    window_ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    severity VARCHAR(16) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'firing',
+    unique_values JSONB NOT NULL DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_aggregation_groups_rule_dim ON alert_aggregation_groups(aggregation_rule_id, dimension_type, dimension_value, status);
+CREATE INDEX IF NOT EXISTS idx_alert_aggregation_groups_window_ends ON alert_aggregation_groups(window_ends_at);
+
+CREATE TRIGGER trg_update_alert_aggregation_groups_timestamp
+BEFORE UPDATE ON alert_aggregation_groups
+FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
+
+CREATE TABLE IF NOT EXISTS alert_aggregation_events (
+    id BIGSERIAL PRIMARY KEY,
+    aggregation_group_id BIGINT NOT NULL,
+    alert_event_id BIGINT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_aggregation_events_group ON alert_aggregation_events(aggregation_group_id);
+CREATE INDEX IF NOT EXISTS idx_alert_aggregation_events_event ON alert_aggregation_events(alert_event_id);
+
+INSERT INTO alert_aggregation_rules (id, name, dimension_type, window_seconds, enabled) VALUES
+('agg-api-path-5min', '按API路径聚合(5分钟)', 'api_path', 300, true),
+('agg-tenant-5min', '按租户聚合(5分钟)', 'tenant_id', 300, true)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO alert_suppression_rules (id, name, source_severity, source_status, target_severity, match_dimension_fields, enabled) VALUES
+('suppress-critical-suppresses-warning-info', 'Critical告警抑制Warning和Info', 'critical', 'firing', 'info', 'dimension_value', true)
+ON CONFLICT DO NOTHING;

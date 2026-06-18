@@ -878,6 +878,7 @@ func (r *AlertEventRepo) List(
 	ruleID string,
 	dimensionType string,
 	dimensionValue string,
+	includeSuppressed bool,
 ) (*models.PaginatedResult, error) {
 	query := r.db.Model(&models.AlertEvent{})
 	if status != nil {
@@ -894,6 +895,9 @@ func (r *AlertEventRepo) List(
 	}
 	if dimensionValue != "" {
 		query = query.Where("dimension_value ILIKE ?", "%"+dimensionValue+"%")
+	}
+	if !includeSuppressed {
+		query = query.Where("suppressed = ?", false)
 	}
 
 	var total int64
@@ -1008,7 +1012,7 @@ func (r *AlertEventRepo) GetStats() (*models.AlertStats, error) {
 
 	var firingCount int64
 	if err := r.db.Model(&models.AlertEvent{}).
-		Where("status = ?", models.StatusFiring).
+		Where("status = ? AND suppressed = ?", models.StatusFiring, false).
 		Count(&firingCount).Error; err != nil {
 		return nil, err
 	}
@@ -1017,7 +1021,7 @@ func (r *AlertEventRepo) GetStats() (*models.AlertStats, error) {
 	todayStart := time.Now().Truncate(24 * time.Hour)
 	var todayCount int64
 	if err := r.db.Model(&models.AlertEvent{}).
-		Where("created_at >= ?", todayStart).
+		Where("created_at >= ? AND suppressed = ?", todayStart, false).
 		Count(&todayCount).Error; err != nil {
 		return nil, err
 	}
@@ -1026,11 +1030,336 @@ func (r *AlertEventRepo) GetStats() (*models.AlertStats, error) {
 	weekStart := time.Now().AddDate(0, 0, -7)
 	var weekCount int64
 	if err := r.db.Model(&models.AlertEvent{}).
-		Where("created_at >= ?", weekStart).
+		Where("created_at >= ? AND suppressed = ?", weekStart, false).
 		Count(&weekCount).Error; err != nil {
 		return nil, err
 	}
 	stats.WeekTotalCount = weekCount
 
 	return stats, nil
+}
+
+type AlertAggregationRuleRepo struct {
+	db *gorm.DB
+}
+
+func NewAlertAggregationRuleRepo(db *gorm.DB) *AlertAggregationRuleRepo {
+	return &AlertAggregationRuleRepo{db: db}
+}
+
+func (r *AlertAggregationRuleRepo) List(page models.Pagination, enabled *bool) (*models.PaginatedResult, error) {
+	query := r.db.Model(&models.AlertAggregationRule{})
+	if enabled != nil {
+		query = query.Where("enabled = ?", *enabled)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var rules []models.AlertAggregationRule
+	err := query.Order("created_at DESC").
+		Offset(page.GetOffset()).
+		Limit(page.GetPageSize()).
+		Find(&rules).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.GetPageSize(),
+		Data:     rules,
+	}, nil
+}
+
+func (r *AlertAggregationRuleRepo) ListAllEnabled() ([]models.AlertAggregationRule, error) {
+	var rules []models.AlertAggregationRule
+	err := r.db.Where("enabled = ?", true).
+		Order("created_at ASC").
+		Find(&rules).Error
+	return rules, err
+}
+
+func (r *AlertAggregationRuleRepo) Get(id string) (*models.AlertAggregationRule, error) {
+	var rule models.AlertAggregationRule
+	err := r.db.Where("id = ?", id).First(&rule).Error
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
+func (r *AlertAggregationRuleRepo) Create(rule *models.AlertAggregationRule) error {
+	if rule.ID == "" {
+		rule.ID = generateUUID()
+	}
+	rule.CreatedAt = time.Now()
+	rule.UpdatedAt = time.Now()
+	return r.db.Create(rule).Error
+}
+
+func (r *AlertAggregationRuleRepo) Update(rule *models.AlertAggregationRule) error {
+	existing, err := r.Get(rule.ID)
+	if err != nil {
+		return err
+	}
+	rule.CreatedAt = existing.CreatedAt
+	rule.UpdatedAt = time.Now()
+	return r.db.Save(rule).Error
+}
+
+func (r *AlertAggregationRuleRepo) Delete(id string) error {
+	return r.db.Delete(&models.AlertAggregationRule{}, "id = ?", id).Error
+}
+
+func (r *AlertAggregationRuleRepo) Toggle(id string, enabled bool) error {
+	res := r.db.Model(&models.AlertAggregationRule{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"enabled":    enabled,
+			"updated_at": time.Now(),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+type AlertSuppressionRuleRepo struct {
+	db *gorm.DB
+}
+
+func NewAlertSuppressionRuleRepo(db *gorm.DB) *AlertSuppressionRuleRepo {
+	return &AlertSuppressionRuleRepo{db: db}
+}
+
+func (r *AlertSuppressionRuleRepo) List(page models.Pagination, enabled *bool) (*models.PaginatedResult, error) {
+	query := r.db.Model(&models.AlertSuppressionRule{})
+	if enabled != nil {
+		query = query.Where("enabled = ?", *enabled)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var rules []models.AlertSuppressionRule
+	err := query.Order("created_at DESC").
+		Offset(page.GetOffset()).
+		Limit(page.GetPageSize()).
+		Find(&rules).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.GetPageSize(),
+		Data:     rules,
+	}, nil
+}
+
+func (r *AlertSuppressionRuleRepo) ListAllEnabled() ([]models.AlertSuppressionRule, error) {
+	var rules []models.AlertSuppressionRule
+	err := r.db.Where("enabled = ?", true).
+		Order("created_at ASC").
+		Find(&rules).Error
+	return rules, err
+}
+
+func (r *AlertSuppressionRuleRepo) Get(id string) (*models.AlertSuppressionRule, error) {
+	var rule models.AlertSuppressionRule
+	err := r.db.Where("id = ?", id).First(&rule).Error
+	if err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
+
+func (r *AlertSuppressionRuleRepo) Create(rule *models.AlertSuppressionRule) error {
+	if rule.ID == "" {
+		rule.ID = generateUUID()
+	}
+	rule.CreatedAt = time.Now()
+	rule.UpdatedAt = time.Now()
+	return r.db.Create(rule).Error
+}
+
+func (r *AlertSuppressionRuleRepo) Update(rule *models.AlertSuppressionRule) error {
+	existing, err := r.Get(rule.ID)
+	if err != nil {
+		return err
+	}
+	rule.CreatedAt = existing.CreatedAt
+	rule.UpdatedAt = time.Now()
+	return r.db.Save(rule).Error
+}
+
+func (r *AlertSuppressionRuleRepo) Delete(id string) error {
+	return r.db.Delete(&models.AlertSuppressionRule{}, "id = ?", id).Error
+}
+
+func (r *AlertSuppressionRuleRepo) Toggle(id string, enabled bool) error {
+	res := r.db.Model(&models.AlertSuppressionRule{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"enabled":    enabled,
+			"updated_at": time.Now(),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+type AlertAggregationGroupRepo struct {
+	db *gorm.DB
+}
+
+func NewAlertAggregationGroupRepo(db *gorm.DB) *AlertAggregationGroupRepo {
+	return &AlertAggregationGroupRepo{db: db}
+}
+
+func (r *AlertAggregationGroupRepo) ListActiveGroups(page models.Pagination) (*models.PaginatedResult, error) {
+	query := r.db.Model(&models.AlertAggregationGroup{}).
+		Where("status = ?", models.StatusFiring)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var groups []models.AlertAggregationGroup
+	err := query.Order("last_triggered_at DESC").
+		Offset(page.GetOffset()).
+		Limit(page.GetPageSize()).
+		Find(&groups).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range groups {
+		unmarshalAggregationGroupFields(&groups[i])
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.GetPageSize(),
+		Data:     groups,
+	}, nil
+}
+
+func (r *AlertAggregationGroupRepo) FindActiveGroup(ruleID string, dimType models.AggregationDimensionType, dimValue string) (*models.AlertAggregationGroup, error) {
+	var group models.AlertAggregationGroup
+	err := r.db.Where(
+		"aggregation_rule_id = ? AND dimension_type = ? AND dimension_value = ? AND status = ?",
+		ruleID, dimType, dimValue, models.StatusFiring,
+	).Order("created_at DESC").First(&group).Error
+	if err != nil {
+		return nil, err
+	}
+	unmarshalAggregationGroupFields(&group)
+	return &group, nil
+}
+
+func (r *AlertAggregationGroupRepo) Get(id int64) (*models.AlertAggregationGroup, error) {
+	var group models.AlertAggregationGroup
+	err := r.db.Where("id = ?", id).First(&group).Error
+	if err != nil {
+		return nil, err
+	}
+	unmarshalAggregationGroupFields(&group)
+	return &group, nil
+}
+
+func (r *AlertAggregationGroupRepo) Create(group *models.AlertAggregationGroup) error {
+	now := time.Now()
+	group.CreatedAt = now
+	group.UpdatedAt = now
+	marshalAggregationGroupFields(group)
+	return r.db.Create(group).Error
+}
+
+func (r *AlertAggregationGroupRepo) Update(group *models.AlertAggregationGroup) error {
+	group.UpdatedAt = time.Now()
+	marshalAggregationGroupFields(group)
+	return r.db.Save(group).Error
+}
+
+func (r *AlertAggregationGroupRepo) GetEventsForGroup(groupID int64, page models.Pagination) (*models.PaginatedResult, error) {
+	var total int64
+	err := r.db.Table("alert_aggregation_events aae").
+		Joins("JOIN alert_events ae ON ae.id = aae.alert_event_id").
+		Where("aae.aggregation_group_id = ?", groupID).
+		Count(&total).Error
+	if err != nil {
+		return nil, err
+	}
+
+	var events []models.AlertEvent
+	err = r.db.Table("alert_aggregation_events aae").
+		Select("ae.*").
+		Joins("JOIN alert_events ae ON ae.id = aae.alert_event_id").
+		Where("aae.aggregation_group_id = ?", groupID).
+		Order("ae.created_at DESC").
+		Offset(page.GetOffset()).
+		Limit(page.GetPageSize()).
+		Scan(&events).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     page.Page,
+		PageSize: page.GetPageSize(),
+		Data:     events,
+	}, nil
+}
+
+func marshalAggregationGroupFields(group *models.AlertAggregationGroup) {
+	if group.UniqueValues != nil {
+		data, _ := json.Marshal(group.UniqueValues)
+		group.UniqueValuesJSON = data
+	}
+}
+
+func unmarshalAggregationGroupFields(group *models.AlertAggregationGroup) {
+	if len(group.UniqueValuesJSON) > 0 {
+		var values []string
+		if json.Unmarshal(group.UniqueValuesJSON, &values) == nil {
+			group.UniqueValues = values
+		}
+	}
+}
+
+type AlertAggregationEventRepo struct {
+	db *gorm.DB
+}
+
+func NewAlertAggregationEventRepo(db *gorm.DB) *AlertAggregationEventRepo {
+	return &AlertAggregationEventRepo{db: db}
+}
+
+func (r *AlertAggregationEventRepo) Create(agg *models.AlertAggregationEvent) error {
+	agg.CreatedAt = time.Now()
+	return r.db.Create(agg).Error
+}
+
+func (r *AlertAggregationEventRepo) FindByEventID(eventID int64) ([]models.AlertAggregationEvent, error) {
+	var items []models.AlertAggregationEvent
+	err := r.db.Where("alert_event_id = ?", eventID).Find(&items).Error
+	return items, err
 }

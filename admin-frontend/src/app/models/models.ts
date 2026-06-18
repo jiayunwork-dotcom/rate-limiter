@@ -241,6 +241,8 @@ export interface AlertEvent {
   expiredAt?: string;
   firingStartedAt: string;
   lastFiringAt: string;
+  suppressed: boolean;
+  suppressedByRuleId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -261,6 +263,85 @@ export interface AlertPushMessage {
   currentValue: number;
   thresholdValue: number;
   status: AlertStatus;
+  suppressed?: boolean;
+  suppressedBy?: string;
+}
+
+export type AggregationDimensionType = 'api_path' | 'tenant_id' | 'rule_id';
+
+export interface AlertAggregationRule {
+  id: string;
+  name: string;
+  dimensionType: AggregationDimensionType;
+  windowSeconds: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertSuppressionRule {
+  id: string;
+  name: string;
+  sourceSeverity: AlertSeverity;
+  sourceStatus: AlertStatus;
+  sourceRuleId?: string;
+  targetSeverity: AlertSeverity;
+  targetDimensionType?: string;
+  matchDimensionFields: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AlertAggregationGroup {
+  id: number;
+  aggregationRuleId: string;
+  dimensionType: AggregationDimensionType;
+  dimensionValue: string;
+  triggerCount: number;
+  firstTriggeredAt: string;
+  lastTriggeredAt: string;
+  windowEndsAt: string;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  uniqueValues: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AggregationPushMessage {
+  groupId: number;
+  aggregationRuleId: string;
+  dimensionType: AggregationDimensionType;
+  dimensionValue: string;
+  triggerCount: number;
+  firstTriggeredAt: string;
+  lastTriggeredAt: string;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  latestDimension: string;
+  uniqueValues: string[];
+}
+
+export interface PaginatedAggregationGroupResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  data: AlertAggregationGroup[];
+}
+
+export interface PaginatedAggregationRuleResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  data: AlertAggregationRule[];
+}
+
+export interface PaginatedSuppressionRuleResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  data: AlertSuppressionRule[];
 }
 
 export interface WebSocketMessage {

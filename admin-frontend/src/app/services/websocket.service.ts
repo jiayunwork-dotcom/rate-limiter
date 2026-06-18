@@ -1,12 +1,13 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import { Subject, Observable } from 'rxjs';
-import { WebSocketMessage, AlertPushMessage, AlertEvent } from '../models/models';
+import { WebSocketMessage, AlertPushMessage, AlertEvent, AggregationPushMessage } from '../models/models';
 
 @Injectable({ providedIn: 'root' })
 export class WebSocketService implements OnDestroy {
   private ws: WebSocket | null = null;
   private messageSubject = new Subject<WebSocketMessage>();
   private alertSubject = new Subject<AlertPushMessage>();
+  private aggregationSubject = new Subject<AggregationPushMessage>();
   private reconnectTimer: any = null;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
@@ -14,6 +15,7 @@ export class WebSocketService implements OnDestroy {
 
   messages$: Observable<WebSocketMessage> = this.messageSubject.asObservable();
   alerts$: Observable<AlertPushMessage> = this.alertSubject.asObservable();
+  aggregations$: Observable<AggregationPushMessage> = this.aggregationSubject.asObservable();
 
   connect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -38,6 +40,8 @@ export class WebSocketService implements OnDestroy {
 
           if (data.type === 'alert_firing') {
             this.alertSubject.next(data.payload as AlertPushMessage);
+          } else if (data.type === 'alert_aggregation_updated') {
+            this.aggregationSubject.next(data.payload as AggregationPushMessage);
           }
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e);

@@ -78,6 +78,10 @@ func main() {
 	templateRepo := repository.NewTemplateRepo(db)
 	alertRuleRepo := repository.NewAlertRuleRepo(db)
 	alertEventRepo := repository.NewAlertEventRepo(db)
+	aggregationRuleRepo := repository.NewAlertAggregationRuleRepo(db)
+	suppressionRuleRepo := repository.NewAlertSuppressionRuleRepo(db)
+	aggregationGroupRepo := repository.NewAlertAggregationGroupRepo(db)
+	aggregationEventRepo := repository.NewAlertAggregationEventRepo(db)
 
 	wsHub := services.NewWebSocketHub()
 	go wsHub.Run()
@@ -89,6 +93,20 @@ func main() {
 	templateSvc := services.NewTemplateService(templateRepo)
 	alertRuleSvc := services.NewAlertRuleService(alertRuleRepo)
 	alertEventSvc := services.NewAlertEventService(alertEventRepo, wsHub)
+	aggregationRuleSvc := services.NewAlertAggregationRuleService(aggregationRuleRepo)
+	suppressionRuleSvc := services.NewAlertSuppressionRuleService(suppressionRuleRepo)
+
+	alertSuppressionSvc := services.NewAlertSuppressionService(suppressionRuleSvc, alertEventRepo)
+	alertAggregationSvc := services.NewAlertAggregationService(
+		aggregationRuleSvc,
+		aggregationGroupRepo,
+		aggregationEventRepo,
+		alertEventRepo,
+		wsHub,
+	)
+
+	alertEventSvc.SetSuppressionService(alertSuppressionSvc)
+	alertEventSvc.SetAggregationService(alertAggregationSvc)
 
 	alertEngine := services.NewAlertEngineService(alertRuleSvc, alertEventSvc, alertEventRepo, db)
 
@@ -102,7 +120,8 @@ func main() {
 		}
 	}()
 
-	h := handlers.NewHandler(ruleSvc, eventSvc, quotaSvc, adaptiveSvc, templateSvc, alertRuleSvc, alertEventSvc, wsHub)
+	h := handlers.NewHandler(ruleSvc, eventSvc, quotaSvc, adaptiveSvc, templateSvc, alertRuleSvc, alertEventSvc,
+		aggregationRuleSvc, suppressionRuleSvc, alertAggregationSvc, alertSuppressionSvc, wsHub)
 
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
@@ -180,6 +199,32 @@ func main() {
 			alertEvents.GET("/:id", h.GetAlertEvent)
 			alertEvents.POST("/:id/acknowledge", h.AcknowledgeAlert)
 		}
+
+		aggregationRules := api.Group("/alert-aggregation-rules")
+		{
+			aggregationRules.GET("", h.ListAggregationRules)
+			aggregationRules.POST("", h.CreateAggregationRule)
+			aggregationRules.GET("/:id", h.GetAggregationRule)
+			aggregationRules.PUT("/:id", h.UpdateAggregationRule)
+			aggregationRules.DELETE("/:id", h.DeleteAggregationRule)
+			aggregationRules.PATCH("/:id/toggle", h.ToggleAggregationRule)
+		}
+
+		suppressionRules := api.Group("/alert-suppression-rules")
+		{
+			suppressionRules.GET("", h.ListSuppressionRules)
+			suppressionRules.POST("", h.CreateSuppressionRule)
+			suppressionRules.GET("/:id", h.GetSuppressionRule)
+			suppressionRules.PUT("/:id", h.UpdateSuppressionRule)
+			suppressionRules.DELETE("/:id", h.DeleteSuppressionRule)
+			suppressionRules.PATCH("/:id/toggle", h.ToggleSuppressionRule)
+		}
+
+		aggregationGroups := api.Group("/alert-aggregation-groups")
+		{
+			aggregationGroups.GET("", h.ListAggregationGroups)
+			aggregationGroups.GET("/:id/events", h.GetAggregationGroupEvents)
+		}
 	}
 
 	engine.GET("/ws/alerts", h.WebSocketEndpoint)
@@ -219,6 +264,10 @@ func autoMigrateDB(db *gorm.DB) error {
 	err := db.AutoMigrate(
 		&models.AlertRule{},
 		&models.AlertEvent{},
+		&models.AlertAggregationRule{},
+		&models.AlertSuppressionRule{},
+		&models.AlertAggregationGroup{},
+		&models.AlertAggregationEvent{},
 	)
 	if err != nil {
 		return err
@@ -234,6 +283,13 @@ func autoMigrateDB(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_alert_events_dimension ON alert_events(dimension_type, dimension_value, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_events_status_created ON alert_events(status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_suppressed ON alert_events(suppressed)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_rules_enabled ON alert_aggregation_rules(enabled)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_suppression_rules_enabled ON alert_suppression_rules(enabled)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_groups_rule_dim ON alert_aggregation_groups(aggregation_rule_id, dimension_type, dimension_value, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_groups_window_ends ON alert_aggregation_groups(window_ends_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_events_group ON alert_aggregation_events(aggregation_group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_events_event ON alert_aggregation_events(alert_event_id)`,
 	}
 
 	for _, sql := range indexSQL {
@@ -281,6 +337,63 @@ func autoMigrateDB(db *gorm.DB) error {
 		if count == 0 {
 			if err := db.Create(&rule).Error; err != nil {
 				log.Printf("Warning: failed to create alert rule %s: %v", rule.ID, err)
+			}
+		}
+	}
+
+	initAggregationRules := []models.AlertAggregationRule{
+		{
+			ID:            "agg-api-path-5min",
+			Name:          "按API路径聚合(5分钟)",
+			DimensionType: models.AggregateByAPI,
+			WindowSeconds: 300,
+			Enabled:       true,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		},
+		{
+			ID:            "agg-tenant-5min",
+			Name:          "按租户聚合(5分钟)",
+			DimensionType: models.AggregateByTenant,
+			WindowSeconds: 300,
+			Enabled:       true,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		},
+	}
+
+	for _, rule := range initAggregationRules {
+		var count int64
+		db.Model(&models.AlertAggregationRule{}).Where("id = ?", rule.ID).Count(&count)
+		if count == 0 {
+			if err := db.Create(&rule).Error; err != nil {
+				log.Printf("Warning: failed to create aggregation rule %s: %v", rule.ID, err)
+			}
+		}
+	}
+
+	initSuppressionRules := []models.AlertSuppressionRule{
+		{
+			ID:                   "suppress-critical-suppresses-warning-info",
+			Name:                 "Critical告警抑制Warning和Info",
+			SourceSeverity:       models.SeverityCritical,
+			SourceStatus:         models.StatusFiring,
+			SourceRuleID:         "",
+			TargetSeverity:       models.SeverityInfo,
+			TargetDimensionType:  "",
+			MatchDimensionFields: "dimension_value",
+			Enabled:              true,
+			CreatedAt:            time.Now(),
+			UpdatedAt:            time.Now(),
+		},
+	}
+
+	for _, rule := range initSuppressionRules {
+		var count int64
+		db.Model(&models.AlertSuppressionRule{}).Where("id = ?", rule.ID).Count(&count)
+		if count == 0 {
+			if err := db.Create(&rule).Error; err != nil {
+				log.Printf("Warning: failed to create suppression rule %s: %v", rule.ID, err)
 			}
 		}
 	}

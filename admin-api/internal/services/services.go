@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -613,12 +614,22 @@ func (s *AlertRuleService) Toggle(id string, enabled bool) error {
 }
 
 type AlertEventService struct {
-	eventRepo *repository.AlertEventRepo
-	hub       *WebSocketHub
+	eventRepo     *repository.AlertEventRepo
+	hub           *WebSocketHub
+	suppressionSvc *AlertSuppressionService
+	aggregationSvc *AlertAggregationService
 }
 
 func NewAlertEventService(eventRepo *repository.AlertEventRepo, hub *WebSocketHub) *AlertEventService {
 	return &AlertEventService{eventRepo: eventRepo, hub: hub}
+}
+
+func (s *AlertEventService) SetSuppressionService(svc *AlertSuppressionService) {
+	s.suppressionSvc = svc
+}
+
+func (s *AlertEventService) SetAggregationService(svc *AlertAggregationService) {
+	s.aggregationSvc = svc
 }
 
 func (s *AlertEventService) List(
@@ -628,8 +639,9 @@ func (s *AlertEventService) List(
 	ruleID string,
 	dimensionType string,
 	dimensionValue string,
+	includeSuppressed bool,
 ) (*models.PaginatedResult, error) {
-	return s.eventRepo.List(page, status, severity, ruleID, dimensionType, dimensionValue)
+	return s.eventRepo.List(page, status, severity, ruleID, dimensionType, dimensionValue, includeSuppressed)
 }
 
 func (s *AlertEventService) Get(id int64) (*models.AlertEvent, error) {
@@ -637,11 +649,28 @@ func (s *AlertEventService) Get(id int64) (*models.AlertEvent, error) {
 }
 
 func (s *AlertEventService) Create(event *models.AlertEvent) error {
+	if s.suppressionSvc != nil {
+		suppressed, ruleID := s.suppressionSvc.CheckSuppression(event)
+		if suppressed {
+			event.Suppressed = true
+			event.SuppressedByRuleID = ruleID
+		}
+	}
+
 	err := s.eventRepo.Create(event)
 	if err != nil {
 		return err
 	}
-	s.pushAlert(event)
+
+	if !event.Suppressed {
+		if s.aggregationSvc != nil {
+			aggregated, _ := s.aggregationSvc.ProcessAlert(event)
+			if aggregated {
+				return nil
+			}
+		}
+		s.pushAlert(event)
+	}
 	return nil
 }
 
@@ -1102,4 +1131,331 @@ func numBucketsForWindow(totalSeconds int64) int64 {
 func (e *AlertEngineService) buildSnapshot(data map[string]interface{}) json.RawMessage {
 	b, _ := json.Marshal(data)
 	return b
+}
+
+type AlertAggregationRuleService struct {
+	ruleRepo *repository.AlertAggregationRuleRepo
+}
+
+func NewAlertAggregationRuleService(ruleRepo *repository.AlertAggregationRuleRepo) *AlertAggregationRuleService {
+	return &AlertAggregationRuleService{ruleRepo: ruleRepo}
+}
+
+func (s *AlertAggregationRuleService) List(page models.Pagination, enabled *bool) (*models.PaginatedResult, error) {
+	return s.ruleRepo.List(page, enabled)
+}
+
+func (s *AlertAggregationRuleService) ListAllEnabled() ([]models.AlertAggregationRule, error) {
+	return s.ruleRepo.ListAllEnabled()
+}
+
+func (s *AlertAggregationRuleService) Get(id string) (*models.AlertAggregationRule, error) {
+	return s.ruleRepo.Get(id)
+}
+
+func (s *AlertAggregationRuleService) Create(rule *models.AlertAggregationRule) error {
+	return s.ruleRepo.Create(rule)
+}
+
+func (s *AlertAggregationRuleService) Update(rule *models.AlertAggregationRule) error {
+	return s.ruleRepo.Update(rule)
+}
+
+func (s *AlertAggregationRuleService) Delete(id string) error {
+	return s.ruleRepo.Delete(id)
+}
+
+func (s *AlertAggregationRuleService) Toggle(id string, enabled bool) error {
+	return s.ruleRepo.Toggle(id, enabled)
+}
+
+type AlertSuppressionRuleService struct {
+	ruleRepo *repository.AlertSuppressionRuleRepo
+}
+
+func NewAlertSuppressionRuleService(ruleRepo *repository.AlertSuppressionRuleRepo) *AlertSuppressionRuleService {
+	return &AlertSuppressionRuleService{ruleRepo: ruleRepo}
+}
+
+func (s *AlertSuppressionRuleService) List(page models.Pagination, enabled *bool) (*models.PaginatedResult, error) {
+	return s.ruleRepo.List(page, enabled)
+}
+
+func (s *AlertSuppressionRuleService) ListAllEnabled() ([]models.AlertSuppressionRule, error) {
+	return s.ruleRepo.ListAllEnabled()
+}
+
+func (s *AlertSuppressionRuleService) Get(id string) (*models.AlertSuppressionRule, error) {
+	return s.ruleRepo.Get(id)
+}
+
+func (s *AlertSuppressionRuleService) Create(rule *models.AlertSuppressionRule) error {
+	return s.ruleRepo.Create(rule)
+}
+
+func (s *AlertSuppressionRuleService) Update(rule *models.AlertSuppressionRule) error {
+	return s.ruleRepo.Update(rule)
+}
+
+func (s *AlertSuppressionRuleService) Delete(id string) error {
+	return s.ruleRepo.Delete(id)
+}
+
+func (s *AlertSuppressionRuleService) Toggle(id string, enabled bool) error {
+	return s.ruleRepo.Toggle(id, enabled)
+}
+
+type AlertAggregationService struct {
+	aggregationRuleSvc  *AlertAggregationRuleService
+	groupRepo           *repository.AlertAggregationGroupRepo
+	aggEventRepo        *repository.AlertAggregationEventRepo
+	eventRepo           *repository.AlertEventRepo
+	hub                 *WebSocketHub
+}
+
+func NewAlertAggregationService(
+	aggregationRuleSvc *AlertAggregationRuleService,
+	groupRepo *repository.AlertAggregationGroupRepo,
+	aggEventRepo *repository.AlertAggregationEventRepo,
+	eventRepo *repository.AlertEventRepo,
+	hub *WebSocketHub,
+) *AlertAggregationService {
+	return &AlertAggregationService{
+		aggregationRuleSvc: aggregationRuleSvc,
+		groupRepo:          groupRepo,
+		aggEventRepo:       aggEventRepo,
+		eventRepo:          eventRepo,
+		hub:                hub,
+	}
+}
+
+func (s *AlertAggregationService) ProcessAlert(event *models.AlertEvent) (bool, *models.AlertAggregationGroup) {
+	rules, err := s.aggregationRuleSvc.ListAllEnabled()
+	if err != nil || len(rules) == 0 {
+		return false, nil
+	}
+
+	for _, rule := range rules {
+		dimValue := s.getAggregationDimensionValue(event, rule.DimensionType)
+		if dimValue == "" {
+			continue
+		}
+
+		group, err := s.groupRepo.FindActiveGroup(rule.ID, rule.DimensionType, dimValue)
+		now := time.Now()
+		windowEnds := now.Add(time.Duration(rule.WindowSeconds) * time.Second)
+
+		if err != nil || group == nil || now.After(group.WindowEndsAt) {
+			group = &models.AlertAggregationGroup{
+				AggregationRuleID: rule.ID,
+				DimensionType:     rule.DimensionType,
+				DimensionValue:    dimValue,
+				TriggerCount:      1,
+				FirstTriggeredAt:  now,
+				LastTriggeredAt:   now,
+				WindowEndsAt:      windowEnds,
+				Severity:          event.Severity,
+				Status:            models.StatusFiring,
+				UniqueValues:      []string{event.DimensionValue},
+			}
+			if err := s.groupRepo.Create(group); err != nil {
+				continue
+			}
+		} else {
+			group.TriggerCount++
+			group.LastTriggeredAt = now
+			group.WindowEndsAt = windowEnds
+
+			hasValue := false
+			for _, v := range group.UniqueValues {
+				if v == event.DimensionValue {
+					hasValue = true
+					break
+				}
+			}
+			if !hasValue {
+				group.UniqueValues = append(group.UniqueValues, event.DimensionValue)
+			}
+
+			if s.compareSeverity(event.Severity, group.Severity) > 0 {
+				group.Severity = event.Severity
+			}
+
+			if err := s.groupRepo.Update(group); err != nil {
+				continue
+			}
+		}
+
+		aggEvent := &models.AlertAggregationEvent{
+			AggregationGroupID: group.ID,
+			AlertEventID:       event.ID,
+		}
+		_ = s.aggEventRepo.Create(aggEvent)
+
+		s.pushAggregationUpdate(group, event.DimensionValue)
+
+		return true, group
+	}
+
+	return false, nil
+}
+
+func (s *AlertAggregationService) getAggregationDimensionValue(event *models.AlertEvent, dimType models.AggregationDimensionType) string {
+	switch dimType {
+	case models.AggregateByRule:
+		return event.AlertRuleID
+	default:
+		if event.DimensionType == string(dimType) {
+			return event.DimensionValue
+		}
+		return ""
+	}
+}
+
+func (s *AlertAggregationService) compareSeverity(a, b models.AlertSeverity) int {
+	severityOrder := map[models.AlertSeverity]int{
+		models.SeverityInfo:     1,
+		models.SeverityWarning:  2,
+		models.SeverityCritical: 3,
+	}
+	return severityOrder[a] - severityOrder[b]
+}
+
+func (s *AlertAggregationService) pushAggregationUpdate(group *models.AlertAggregationGroup, latestDim string) {
+	msg := models.AggregationPushMessage{
+		GroupID:           group.ID,
+		AggregationRuleID: group.AggregationRuleID,
+		DimensionType:     group.DimensionType,
+		DimensionValue:    group.DimensionValue,
+		TriggerCount:      group.TriggerCount,
+		FirstTriggeredAt:  group.FirstTriggeredAt,
+		LastTriggeredAt:   group.LastTriggeredAt,
+		Severity:          group.Severity,
+		Status:            group.Status,
+		LatestDimension:   latestDim,
+		UniqueValues:      group.UniqueValues,
+	}
+	s.hub.Broadcast("alert_aggregation_updated", msg)
+}
+
+func (s *AlertAggregationService) ListActiveGroups(page models.Pagination) (*models.PaginatedResult, error) {
+	return s.groupRepo.ListActiveGroups(page)
+}
+
+func (s *AlertAggregationService) GetGroupEvents(groupID int64, page models.Pagination) (*models.PaginatedResult, error) {
+	return s.groupRepo.GetEventsForGroup(groupID, page)
+}
+
+type AlertSuppressionService struct {
+	suppressionRuleSvc *AlertSuppressionRuleService
+	eventRepo          *repository.AlertEventRepo
+}
+
+func NewAlertSuppressionService(
+	suppressionRuleSvc *AlertSuppressionRuleService,
+	eventRepo *repository.AlertEventRepo,
+) *AlertSuppressionService {
+	return &AlertSuppressionService{
+		suppressionRuleSvc: suppressionRuleSvc,
+		eventRepo:          eventRepo,
+	}
+}
+
+func (s *AlertSuppressionService) CheckSuppression(event *models.AlertEvent) (bool, string) {
+	rules, err := s.suppressionRuleSvc.ListAllEnabled()
+	if err != nil || len(rules) == 0 {
+		return false, ""
+	}
+
+	activeEvents, err := s.eventRepo.ListActiveEvents()
+	if err != nil {
+		return false, ""
+	}
+
+	activeFiringEvents := make([]models.AlertEvent, 0)
+	for _, e := range activeEvents {
+		if e.Status == models.StatusFiring && !e.Suppressed {
+			activeFiringEvents = append(activeFiringEvents, e)
+		}
+	}
+
+	if len(activeFiringEvents) == 0 {
+		return false, ""
+	}
+
+	for _, rule := range rules {
+		if !s.matchesSourceSeverity(event.Severity, rule.SourceSeverity) {
+			continue
+		}
+
+		for _, sourceEvent := range activeFiringEvents {
+			if sourceEvent.ID == event.ID {
+				continue
+			}
+
+			if rule.SourceRuleID != "" && sourceEvent.AlertRuleID != rule.SourceRuleID {
+				continue
+			}
+
+			if !s.matchesTargetSeverity(event.Severity, rule.TargetSeverity) {
+				continue
+			}
+
+			if rule.TargetDimensionType != "" && event.DimensionType != rule.TargetDimensionType {
+				continue
+			}
+
+			if !s.dimensionsMatch(&sourceEvent, event, rule.MatchDimensionFields) {
+				continue
+			}
+
+			return true, rule.ID
+		}
+	}
+
+	return false, ""
+}
+
+func (s *AlertSuppressionService) matchesSourceSeverity(targetSeverity, sourceSeverity models.AlertSeverity) bool {
+	severityOrder := map[models.AlertSeverity]int{
+		models.SeverityInfo:     1,
+		models.SeverityWarning:  2,
+		models.SeverityCritical: 3,
+	}
+	return severityOrder[sourceSeverity] > severityOrder[targetSeverity]
+}
+
+func (s *AlertSuppressionService) matchesTargetSeverity(eventSeverity, targetSeverity models.AlertSeverity) bool {
+	severityOrder := map[models.AlertSeverity]int{
+		models.SeverityInfo:     1,
+		models.SeverityWarning:  2,
+		models.SeverityCritical: 3,
+	}
+	return severityOrder[eventSeverity] <= severityOrder[targetSeverity]
+}
+
+func (s *AlertSuppressionService) dimensionsMatch(source, target *models.AlertEvent, matchFields string) bool {
+	if matchFields == "" {
+		return true
+	}
+
+	fields := strings.Split(matchFields, ",")
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		switch field {
+		case "dimension_type":
+			if source.DimensionType != target.DimensionType {
+				return false
+			}
+		case "dimension_value":
+			if source.DimensionValue != target.DimensionValue {
+				return false
+			}
+		case "alert_rule_id":
+			if source.AlertRuleID != target.AlertRuleID {
+				return false
+			}
+		}
+	}
+	return true
 }

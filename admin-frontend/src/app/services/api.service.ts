@@ -5,7 +5,10 @@ import {
   RuleConfig, RuleVersion, QuotaConfig, QuotaTreeNode, RateLimitEvent,
   TrafficSeriesPoint, TenantShareData, HeatmapData, AdaptiveStatus, AdaptiveConfigUpdate,
   RuleTemplate, AlertRule, AlertEvent, AlertStats,
-  PaginatedAlertResult, PaginatedAlertRuleResult, AlertStatus, AlertSeverity
+  PaginatedAlertResult, PaginatedAlertRuleResult, AlertStatus, AlertSeverity,
+  AlertAggregationRule, AlertSuppressionRule, AlertAggregationGroup,
+  PaginatedAggregationRuleResult, PaginatedSuppressionRuleResult, PaginatedAggregationGroupResult,
+  AggregationDimensionType
 } from '../models/models';
 
 @Injectable({ providedIn: 'root' })
@@ -211,5 +214,99 @@ export class ApiService {
 
   getAlertStats(): Observable<AlertStats> {
     return this.http.get<AlertStats>(`${this.baseUrl}/alert-events/stats`);
+  }
+
+  listAggregationRules(params?: {
+    enabled?: boolean;
+    page?: number;
+    pageSize?: number;
+  }): Observable<PaginatedAggregationRuleResult> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get<PaginatedAggregationRuleResult>(`${this.baseUrl}/alert-aggregation-rules`, { params: httpParams });
+  }
+
+  getAggregationRule(id: string): Observable<AlertAggregationRule> {
+    return this.http.get<AlertAggregationRule>(`${this.baseUrl}/alert-aggregation-rules/${id}`);
+  }
+
+  createAggregationRule(rule: Partial<AlertAggregationRule>): Observable<AlertAggregationRule> {
+    return this.http.post<AlertAggregationRule>(`${this.baseUrl}/alert-aggregation-rules`, rule);
+  }
+
+  updateAggregationRule(id: string, rule: Partial<AlertAggregationRule>): Observable<AlertAggregationRule> {
+    return this.http.put<AlertAggregationRule>(`${this.baseUrl}/alert-aggregation-rules/${id}`, rule);
+  }
+
+  deleteAggregationRule(id: string): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/alert-aggregation-rules/${id}`);
+  }
+
+  toggleAggregationRule(id: string, enabled: boolean): Observable<any> {
+    return this.http.patch(`${this.baseUrl}/alert-aggregation-rules/${id}/toggle`, { enabled });
+  }
+
+  listSuppressionRules(params?: {
+    enabled?: boolean;
+    page?: number;
+    pageSize?: number;
+  }): Observable<PaginatedSuppressionRuleResult> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get<PaginatedSuppressionRuleResult>(`${this.baseUrl}/alert-suppression-rules`, { params: httpParams });
+  }
+
+  getSuppressionRule(id: string): Observable<AlertSuppressionRule> {
+    return this.http.get<AlertSuppressionRule>(`${this.baseUrl}/alert-suppression-rules/${id}`);
+  }
+
+  createSuppressionRule(rule: Partial<AlertSuppressionRule>): Observable<AlertSuppressionRule> {
+    return this.http.post<AlertSuppressionRule>(`${this.baseUrl}/alert-suppression-rules`, rule);
+  }
+
+  updateSuppressionRule(id: string, rule: Partial<AlertSuppressionRule>): Observable<AlertSuppressionRule> {
+    return this.http.put<AlertSuppressionRule>(`${this.baseUrl}/alert-suppression-rules/${id}`, rule);
+  }
+
+  deleteSuppressionRule(id: string): Observable<any> {
+    return this.http.delete(`${this.baseUrl}/alert-suppression-rules/${id}`);
+  }
+
+  toggleSuppressionRule(id: string, enabled: boolean): Observable<any> {
+    return this.http.patch(`${this.baseUrl}/alert-suppression-rules/${id}/toggle`, { enabled });
+  }
+
+  listAggregationGroups(params?: {
+    page?: number;
+    pageSize?: number;
+  }): Observable<PaginatedAggregationGroupResult> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get<PaginatedAggregationGroupResult>(`${this.baseUrl}/alert-aggregation-groups`, { params: httpParams });
+  }
+
+  getAggregationGroupEvents(groupId: number, params?: {
+    page?: number;
+    pageSize?: number;
+  }): Observable<PaginatedAlertResult> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get<PaginatedAlertResult>(`${this.baseUrl}/alert-aggregation-groups/${groupId}/events`, { params: httpParams });
   }
 }

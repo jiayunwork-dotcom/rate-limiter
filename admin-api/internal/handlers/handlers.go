@@ -15,14 +15,18 @@ import (
 )
 
 type Handler struct {
-	rules      *services.RuleService
-	events     *services.EventService
-	quotas     *services.QuotaService
-	adaptive   *services.AdaptiveService
-	templates  *services.TemplateService
-	alertRules *services.AlertRuleService
-	alertEvents *services.AlertEventService
-	wsHub      *services.WebSocketHub
+	rules               *services.RuleService
+	events              *services.EventService
+	quotas              *services.QuotaService
+	adaptive            *services.AdaptiveService
+	templates           *services.TemplateService
+	alertRules          *services.AlertRuleService
+	alertEvents         *services.AlertEventService
+	aggregationRules    *services.AlertAggregationRuleService
+	suppressionRules    *services.AlertSuppressionRuleService
+	alertAggregation    *services.AlertAggregationService
+	alertSuppression    *services.AlertSuppressionService
+	wsHub               *services.WebSocketHub
 }
 
 func NewHandler(
@@ -33,17 +37,25 @@ func NewHandler(
 	templates *services.TemplateService,
 	alertRules *services.AlertRuleService,
 	alertEvents *services.AlertEventService,
+	aggregationRules *services.AlertAggregationRuleService,
+	suppressionRules *services.AlertSuppressionRuleService,
+	alertAggregation *services.AlertAggregationService,
+	alertSuppression *services.AlertSuppressionService,
 	wsHub *services.WebSocketHub,
 ) *Handler {
 	return &Handler{
-		rules:      rules,
-		events:     events,
-		quotas:     quotas,
-		adaptive:   adaptive,
-		templates:  templates,
-		alertRules: alertRules,
-		alertEvents: alertEvents,
-		wsHub:      wsHub,
+		rules:               rules,
+		events:              events,
+		quotas:              quotas,
+		adaptive:            adaptive,
+		templates:           templates,
+		alertRules:          alertRules,
+		alertEvents:         alertEvents,
+		aggregationRules:    aggregationRules,
+		suppressionRules:    suppressionRules,
+		alertAggregation:    alertAggregation,
+		alertSuppression:    alertSuppression,
+		wsHub:               wsHub,
 	}
 }
 
@@ -579,8 +591,9 @@ func (h *Handler) ListAlertEvents(c *gin.Context) {
 	ruleID := c.Query("rule_id")
 	dimensionType := c.Query("dimension_type")
 	dimensionValue := c.Query("dimension_value")
+	includeSuppressed := c.Query("include_suppressed") == "true"
 
-	result, err := h.alertEvents.List(page, status, severity, ruleID, dimensionType, dimensionValue)
+	result, err := h.alertEvents.List(page, status, severity, ruleID, dimensionType, dimensionValue, includeSuppressed)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to list alert events",
@@ -641,6 +654,216 @@ func (h *Handler) GetAlertStats(c *gin.Context) {
 
 func (h *Handler) WebSocketEndpoint(c *gin.Context) {
 	h.wsHub.HandleWebSocket(c.Writer, c.Request)
+}
+
+func (h *Handler) ListAggregationRules(c *gin.Context) {
+	var page models.Pagination
+	if err := c.ShouldBindQuery(&page); err != nil {
+		page.Page = 1
+		page.PageSize = 20
+	}
+	var enabled *bool
+	if e := c.Query("enabled"); e != "" {
+		v := e == "true" || e == "1"
+		enabled = &v
+	}
+	result, err := h.aggregationRules.List(page, enabled)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list aggregation rules",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) GetAggregationRule(c *gin.Context) {
+	id := c.Param("id")
+	rule, err := h.aggregationRules.Get(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "aggregation rule not found"})
+		return
+	}
+	c.JSON(http.StatusOK, rule)
+}
+
+func (h *Handler) CreateAggregationRule(c *gin.Context) {
+	var rule models.AlertAggregationRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.aggregationRules.Create(&rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, rule)
+}
+
+func (h *Handler) UpdateAggregationRule(c *gin.Context) {
+	id := c.Param("id")
+	var rule models.AlertAggregationRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	rule.ID = id
+	if err := h.aggregationRules.Update(&rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, rule)
+}
+
+func (h *Handler) DeleteAggregationRule(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.aggregationRules.Delete(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ToggleAggregationRule(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.aggregationRules.Toggle(id, body.Enabled); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": id, "enabled": body.Enabled})
+}
+
+func (h *Handler) ListSuppressionRules(c *gin.Context) {
+	var page models.Pagination
+	if err := c.ShouldBindQuery(&page); err != nil {
+		page.Page = 1
+		page.PageSize = 20
+	}
+	var enabled *bool
+	if e := c.Query("enabled"); e != "" {
+		v := e == "true" || e == "1"
+		enabled = &v
+	}
+	result, err := h.suppressionRules.List(page, enabled)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list suppression rules",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) GetSuppressionRule(c *gin.Context) {
+	id := c.Param("id")
+	rule, err := h.suppressionRules.Get(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "suppression rule not found"})
+		return
+	}
+	c.JSON(http.StatusOK, rule)
+}
+
+func (h *Handler) CreateSuppressionRule(c *gin.Context) {
+	var rule models.AlertSuppressionRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.suppressionRules.Create(&rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, rule)
+}
+
+func (h *Handler) UpdateSuppressionRule(c *gin.Context) {
+	id := c.Param("id")
+	var rule models.AlertSuppressionRule
+	if err := c.ShouldBindJSON(&rule); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	rule.ID = id
+	if err := h.suppressionRules.Update(&rule); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, rule)
+}
+
+func (h *Handler) DeleteSuppressionRule(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.suppressionRules.Delete(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ToggleSuppressionRule(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.suppressionRules.Toggle(id, body.Enabled); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": id, "enabled": body.Enabled})
+}
+
+func (h *Handler) ListAggregationGroups(c *gin.Context) {
+	var page models.Pagination
+	if err := c.ShouldBindQuery(&page); err != nil {
+		page.Page = 1
+		page.PageSize = 20
+	}
+	result, err := h.alertAggregation.ListActiveGroups(page)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list aggregation groups",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) GetAggregationGroupEvents(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	var page models.Pagination
+	if err := c.ShouldBindQuery(&page); err != nil {
+		page.Page = 1
+		page.PageSize = 20
+	}
+	result, err := h.alertAggregation.GetGroupEvents(id, page)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get aggregation group events",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func CORSMiddleware() gin.HandlerFunc {

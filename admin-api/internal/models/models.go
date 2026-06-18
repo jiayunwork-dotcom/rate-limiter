@@ -344,24 +344,26 @@ func (AlertRule) TableName() string {
 }
 
 type AlertEvent struct {
-	ID                int64           `json:"id" gorm:"column:id;primaryKey"`
-	AlertRuleID       string          `json:"alertRuleId" gorm:"column:alert_rule_id;type:varchar(64);index"`
-	RuleName          string          `json:"ruleName" gorm:"column:rule_name;type:varchar(255)"`
-	Severity          AlertSeverity   `json:"severity" gorm:"column:severity;type:varchar(16);index"`
-	Status            AlertStatus     `json:"status" gorm:"column:status;type:varchar(16);index"`
-	DimensionType     string          `json:"dimensionType" gorm:"column:dimension_type;type:varchar(32);index"`
-	DimensionValue    string          `json:"dimensionValue" gorm:"column:dimension_value;type:varchar(512);index"`
-	CurrentValue      float64         `json:"currentValue" gorm:"column:current_value"`
-	ThresholdValue    float64         `json:"thresholdValue" gorm:"column:threshold_value"`
-	TriggerSnapshot   json.RawMessage `json:"triggerSnapshot,omitempty" gorm:"column:trigger_snapshot;type:jsonb"`
-	AcknowledgedBy    *string         `json:"acknowledgedBy,omitempty" gorm:"column:acknowledged_by;type:varchar(128)"`
-	AcknowledgedAt    *time.Time      `json:"acknowledgedAt,omitempty" gorm:"column:acknowledged_at"`
-	ResolvedAt        *time.Time      `json:"resolvedAt,omitempty" gorm:"column:resolved_at"`
-	ExpiredAt         *time.Time      `json:"expiredAt,omitempty" gorm:"column:expired_at"`
-	FiringStartedAt   time.Time       `json:"firingStartedAt" gorm:"column:firing_started_at;default:now()"`
-	LastFiringAt      time.Time       `json:"lastFiringAt" gorm:"column:last_firing_at;default:now()"`
-	CreatedAt         time.Time       `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt         time.Time       `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
+	ID                  int64           `json:"id" gorm:"column:id;primaryKey"`
+	AlertRuleID         string          `json:"alertRuleId" gorm:"column:alert_rule_id;type:varchar(64);index"`
+	RuleName            string          `json:"ruleName" gorm:"column:rule_name;type:varchar(255)"`
+	Severity            AlertSeverity   `json:"severity" gorm:"column:severity;type:varchar(16);index"`
+	Status              AlertStatus     `json:"status" gorm:"column:status;type:varchar(16);index"`
+	DimensionType       string          `json:"dimensionType" gorm:"column:dimension_type;type:varchar(32);index"`
+	DimensionValue      string          `json:"dimensionValue" gorm:"column:dimension_value;type:varchar(512);index"`
+	CurrentValue        float64         `json:"currentValue" gorm:"column:current_value"`
+	ThresholdValue      float64         `json:"thresholdValue" gorm:"column:threshold_value"`
+	TriggerSnapshot     json.RawMessage `json:"triggerSnapshot,omitempty" gorm:"column:trigger_snapshot;type:jsonb"`
+	AcknowledgedBy      *string         `json:"acknowledgedBy,omitempty" gorm:"column:acknowledged_by;type:varchar(128)"`
+	AcknowledgedAt      *time.Time      `json:"acknowledgedAt,omitempty" gorm:"column:acknowledged_at"`
+	ResolvedAt          *time.Time      `json:"resolvedAt,omitempty" gorm:"column:resolved_at"`
+	ExpiredAt           *time.Time      `json:"expiredAt,omitempty" gorm:"column:expired_at"`
+	FiringStartedAt     time.Time       `json:"firingStartedAt" gorm:"column:firing_started_at;default:now()"`
+	LastFiringAt        time.Time       `json:"lastFiringAt" gorm:"column:last_firing_at;default:now()"`
+	Suppressed          bool            `json:"suppressed" gorm:"column:suppressed;default:false;index"`
+	SuppressedByRuleID  string          `json:"suppressedByRuleId,omitempty" gorm:"column:suppressed_by_rule_id;type:varchar(64)"`
+	CreatedAt           time.Time       `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt           time.Time       `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
 }
 
 func (AlertEvent) TableName() string {
@@ -389,4 +391,97 @@ type AlertPushMessage struct {
 	CurrentValue   float64       `json:"currentValue"`
 	ThresholdValue float64       `json:"thresholdValue"`
 	Status         AlertStatus   `json:"status"`
+	Suppressed     bool          `json:"suppressed,omitempty"`
+	SuppressedBy   string        `json:"suppressedBy,omitempty"`
+}
+
+type AggregationDimensionType string
+
+const (
+	AggregateByAPI      AggregationDimensionType = "api_path"
+	AggregateByTenant   AggregationDimensionType = "tenant_id"
+	AggregateByRule     AggregationDimensionType = "rule_id"
+)
+
+type AlertAggregationRule struct {
+	ID              string                  `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	Name            string                  `json:"name" gorm:"column:name;type:varchar(255)"`
+	DimensionType   AggregationDimensionType `json:"dimensionType" gorm:"column:dimension_type;type:varchar(32)"`
+	WindowSeconds   int64                   `json:"windowSeconds" gorm:"column:window_seconds"`
+	Enabled         bool                    `json:"enabled" gorm:"column:enabled"`
+	CreatedAt       time.Time               `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt       time.Time               `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (AlertAggregationRule) TableName() string {
+	return "alert_aggregation_rules"
+}
+
+type AlertSuppressionRule struct {
+	ID                    string          `json:"id" gorm:"column:id;primaryKey;type:varchar(64)"`
+	Name                  string          `json:"name" gorm:"column:name;type:varchar(255)"`
+	SourceSeverity        AlertSeverity   `json:"sourceSeverity" gorm:"column:source_severity;type:varchar(16)"`
+	SourceStatus          AlertStatus     `json:"sourceStatus" gorm:"column:source_status;type:varchar(16)"`
+	SourceRuleID          string          `json:"sourceRuleId,omitempty" gorm:"column:source_rule_id;type:varchar(64)"`
+	TargetSeverity        AlertSeverity   `json:"targetSeverity" gorm:"column:target_severity;type:varchar(16)"`
+	TargetDimensionType   string          `json:"targetDimensionType,omitempty" gorm:"column:target_dimension_type;type:varchar(32)"`
+	MatchDimensionFields  string          `json:"matchDimensionFields" gorm:"column:match_dimension_fields;type:varchar(512)"`
+	Enabled               bool            `json:"enabled" gorm:"column:enabled"`
+	CreatedAt             time.Time       `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt             time.Time       `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (AlertSuppressionRule) TableName() string {
+	return "alert_suppression_rules"
+}
+
+type AlertAggregationGroup struct {
+	ID                int64                   `json:"id" gorm:"column:id;primaryKey"`
+	AggregationRuleID string                  `json:"aggregationRuleId" gorm:"column:aggregation_rule_id;type:varchar(64);index"`
+	DimensionType     AggregationDimensionType `json:"dimensionType" gorm:"column:dimension_type;type:varchar(32)"`
+	DimensionValue    string                  `json:"dimensionValue" gorm:"column:dimension_value;type:varchar(512)"`
+	TriggerCount      int64                   `json:"triggerCount" gorm:"column:trigger_count"`
+	FirstTriggeredAt  time.Time               `json:"firstTriggeredAt" gorm:"column:first_triggered_at"`
+	LastTriggeredAt   time.Time               `json:"lastTriggeredAt" gorm:"column:last_triggered_at"`
+	WindowEndsAt      time.Time               `json:"windowEndsAt" gorm:"column:window_ends_at;index"`
+	Severity          AlertSeverity           `json:"severity" gorm:"column:severity;type:varchar(16)"`
+	Status            AlertStatus             `json:"status" gorm:"column:status;type:varchar(16)"`
+	UniqueValuesJSON  json.RawMessage         `json:"-" gorm:"column:unique_values;type:jsonb"`
+	UniqueValues      []string                `json:"uniqueValues" gorm:"-"`
+	CreatedAt         time.Time               `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt         time.Time               `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (AlertAggregationGroup) TableName() string {
+	return "alert_aggregation_groups"
+}
+
+type AlertAggregationEvent struct {
+	ID                int64 `json:"id" gorm:"column:id;primaryKey"`
+	AggregationGroupID int64 `json:"aggregationGroupId" gorm:"column:aggregation_group_id;index"`
+	AlertEventID      int64 `json:"alertEventId" gorm:"column:alert_event_id;index"`
+	CreatedAt         time.Time `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
+}
+
+func (AlertAggregationEvent) TableName() string {
+	return "alert_aggregation_events"
+}
+
+type AlertAggregationGroupWithEvents struct {
+	AlertAggregationGroup
+	Events []AlertEvent `json:"events,omitempty"`
+}
+
+type AggregationPushMessage struct {
+	GroupID          int64                   `json:"groupId"`
+	AggregationRuleID string                 `json:"aggregationRuleId"`
+	DimensionType    AggregationDimensionType `json:"dimensionType"`
+	DimensionValue   string                  `json:"dimensionValue"`
+	TriggerCount     int64                   `json:"triggerCount"`
+	FirstTriggeredAt time.Time               `json:"firstTriggeredAt"`
+	LastTriggeredAt  time.Time               `json:"lastTriggeredAt"`
+	Severity         AlertSeverity           `json:"severity"`
+	Status           AlertStatus             `json:"status"`
+	LatestDimension  string                  `json:"latestDimension"`
+	UniqueValues     []string                `json:"uniqueValues"`
 }
