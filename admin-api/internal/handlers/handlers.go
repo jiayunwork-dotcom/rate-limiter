@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +15,16 @@ import (
 	"github.com/ratelimiter/admin-api/internal/models"
 	"github.com/ratelimiter/admin-api/internal/services"
 )
+
+type responseBodyWriter struct {
+	gin.ResponseWriter
+	body *bytes.Buffer
+}
+
+func (r responseBodyWriter) Write(b []byte) (int, error) {
+	r.body.Write(b)
+	return r.ResponseWriter.Write(b)
+}
 
 type Handler struct {
 	rules               *services.RuleService
@@ -1041,16 +1050,14 @@ func (m *AuditMiddleware) Middleware() gin.HandlerFunc {
 		requestIP := c.ClientIP()
 
 		resourceID := c.Param("id")
-		var createdResourceID string
-
-		if opType == models.AuditOpCreate {
-			createdResourceID = m.extractCreatedResourceID(c, resourceType)
-		}
 
 		var beforeSnapshot interface{}
 		if opType != models.AuditOpCreate && resourceID != "" {
 			beforeSnapshot = m.getResource(resourceType, resourceID)
 		}
+
+		w := &responseBodyWriter{body: &bytes.Buffer{}, ResponseWriter: c.Writer}
+		c.Writer = w
 
 		c.Next()
 
@@ -1060,11 +1067,21 @@ func (m *AuditMiddleware) Middleware() gin.HandlerFunc {
 
 		var afterSnapshot interface{}
 		var finalResourceID string
+		responseBody := w.body.Bytes()
 
 		if opType == models.AuditOpCreate {
-			finalResourceID = createdResourceID
+			finalResourceID = m.extractResourceIDFromResponse(responseBody)
 			if finalResourceID != "" {
 				afterSnapshot = m.getResource(resourceType, finalResourceID)
+			}
+			if afterSnapshot == nil {
+				var respObj interface{}
+				if err := json.Unmarshal(responseBody, &respObj); err == nil {
+					afterSnapshot = respObj
+					if finalResourceID == "" {
+						finalResourceID = m.extractIDFromObject(respObj)
+					}
+				}
 			}
 		} else if opType == models.AuditOpDelete {
 			finalResourceID = resourceID
@@ -1223,23 +1240,22 @@ func (m *AuditMiddleware) getResource(resType models.AuditResourceType, resID st
 	return nil
 }
 
-func (m *AuditMiddleware) extractCreatedResourceID(c *gin.Context, resType models.AuditResourceType) string {
-	if c.Request.Body == nil {
+func (m *AuditMiddleware) extractResourceIDFromResponse(body []byte) string {
+	if len(body) == 0 {
 		return ""
 	}
-
-	body, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		return ""
-	}
-
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
-
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
 		return ""
 	}
+	return m.extractIDFromObject(data)
+}
 
+func (m *AuditMiddleware) extractIDFromObject(obj interface{}) string {
+	data, ok := obj.(map[string]interface{})
+	if !ok {
+		return ""
+	}
 	if id, ok := data["id"]; ok {
 		switch v := id.(type) {
 		case string:
@@ -1248,7 +1264,6 @@ func (m *AuditMiddleware) extractCreatedResourceID(c *gin.Context, resType model
 			return strconv.FormatInt(int64(v), 10)
 		}
 	}
-
 	return ""
 }
 

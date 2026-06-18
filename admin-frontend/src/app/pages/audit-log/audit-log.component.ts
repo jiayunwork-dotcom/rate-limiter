@@ -58,7 +58,7 @@ import { ApiService } from '../../services/api.service';
           {{ stats.lastOperationType ? getOperationTypeLabel(stats.lastOperationType) : '-' }}
           {{ stats.lastResourceType ? '/' + getResourceTypeLabel(stats.lastResourceType) : '' }}
         </div>
-        <div class="stat-change">{{ stats.lastOperationTime | date:'yyyy-MM-dd HH:mm:ss' }}</div>
+        <div class="stat-change">{{ formatLastOperationTime() }}</div>
       </div>
     </div>
 
@@ -624,6 +624,18 @@ export class AuditLogComponent implements OnInit {
     if (value === null || value === undefined) return '-';
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
+  }
+
+  formatLastOperationTime(): string {
+    if (!this.stats || !this.stats.lastOperationTime) {
+      return '暂无';
+    }
+    const t = new Date(this.stats.lastOperationTime);
+    if (isNaN(t.getTime()) || t.getFullYear() < 1970) {
+      return '暂无';
+    }
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())} ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
   }
 
   getOperationTypeLabel(type: AuditOperationType): string {
