@@ -363,7 +363,7 @@ import { Subscription } from 'rxjs';
 
       <div class="alert-sidebar">
         <div class="card">
-          <mat-tabs>
+          <mat-tab-group>
             <mat-tab label="告警规则">
               <ng-template matTabContent>
                 <div class="tab-content">
@@ -469,7 +469,7 @@ import { Subscription } from 'rxjs';
                 </div>
               </ng-template>
             </mat-tab>
-          </mat-tabs>
+          </mat-tab-group>
         </div>
       </div>
     </div>

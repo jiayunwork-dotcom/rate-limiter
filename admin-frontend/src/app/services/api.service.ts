@@ -198,7 +198,7 @@ export class ApiService {
     let httpParams = new HttpParams();
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+        if (v !== undefined && v !== null && String(v) !== '') httpParams = httpParams.set(k, String(v));
       });
     }
     return this.http.get<PaginatedAlertResult>(`${this.baseUrl}/alert-events`, { params: httpParams });
@@ -224,7 +224,7 @@ export class ApiService {
     let httpParams = new HttpParams();
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+        if (v !== undefined && v !== null && String(v) !== '') httpParams = httpParams.set(k, String(v));
       });
     }
     return this.http.get<PaginatedAggregationRuleResult>(`${this.baseUrl}/alert-aggregation-rules`, { params: httpParams });
@@ -258,7 +258,7 @@ export class ApiService {
     let httpParams = new HttpParams();
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+        if (v !== undefined && v !== null && String(v) !== '') httpParams = httpParams.set(k, String(v));
       });
     }
     return this.http.get<PaginatedSuppressionRuleResult>(`${this.baseUrl}/alert-suppression-rules`, { params: httpParams });
@@ -291,7 +291,7 @@ export class ApiService {
     let httpParams = new HttpParams();
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+        if (v !== undefined && v !== null && String(v) !== '') httpParams = httpParams.set(k, String(v));
       });
     }
     return this.http.get<PaginatedAggregationGroupResult>(`${this.baseUrl}/alert-aggregation-groups`, { params: httpParams });
@@ -304,7 +304,7 @@ export class ApiService {
     let httpParams = new HttpParams();
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== '') httpParams = httpParams.set(k, String(v));
+        if (v !== undefined && v !== null && String(v) !== '') httpParams = httpParams.set(k, String(v));
       });
     }
     return this.http.get<PaginatedAlertResult>(`${this.baseUrl}/alert-aggregation-groups/${groupId}/events`, { params: httpParams });
