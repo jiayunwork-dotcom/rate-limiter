@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +29,7 @@ type Handler struct {
 	suppressionRules    *services.AlertSuppressionRuleService
 	alertAggregation    *services.AlertAggregationService
 	alertSuppression    *services.AlertSuppressionService
+	audit               *services.AuditService
 	wsHub               *services.WebSocketHub
 }
 
@@ -41,6 +45,7 @@ func NewHandler(
 	suppressionRules *services.AlertSuppressionRuleService,
 	alertAggregation *services.AlertAggregationService,
 	alertSuppression *services.AlertSuppressionService,
+	audit *services.AuditService,
 	wsHub *services.WebSocketHub,
 ) *Handler {
 	return &Handler{
@@ -55,6 +60,7 @@ func NewHandler(
 		suppressionRules:    suppressionRules,
 		alertAggregation:    alertAggregation,
 		alertSuppression:    alertSuppression,
+		audit:               audit,
 		wsHub:               wsHub,
 	}
 }
@@ -864,6 +870,386 @@ func (h *Handler) GetAggregationGroupEvents(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) ListAuditLogs(c *gin.Context) {
+	var query models.AuditLogQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		query.Page = 1
+		query.PageSize = 20
+	}
+	if query.Page <= 0 {
+		query.Page = 1
+	}
+	if query.PageSize <= 0 {
+		query.PageSize = 20
+	}
+
+	if s := c.Query("start_time"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			query.StartTime = &t
+		}
+	}
+	if e := c.Query("end_time"); e != "" {
+		if t, err := time.Parse(time.RFC3339, e); err == nil {
+			query.EndTime = &t
+		}
+	}
+
+	result, err := h.audit.List(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list audit logs",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) GetAuditLog(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	log, err := h.audit.Get(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "audit log not found"})
+		return
+	}
+	c.JSON(http.StatusOK, log)
+}
+
+func (h *Handler) GetAuditTimeline(c *gin.Context) {
+	resourceType := models.AuditResourceType(c.Query("resource_type"))
+	resourceID := c.Query("resource_id")
+	if resourceType == "" || resourceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "resource_type and resource_id are required"})
+		return
+	}
+	nodes, err := h.audit.GetTimeline(resourceType, resourceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get audit timeline",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, nodes)
+}
+
+func (h *Handler) GetAuditStats(c *gin.Context) {
+	stats, err := h.audit.GetStats()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to get audit stats",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, stats)
+}
+
+func (h *Handler) ListAuditOperators(c *gin.Context) {
+	operators, err := h.audit.ListOperators()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to list operators",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, operators)
+}
+
+func (h *Handler) RollbackAuditOperation(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	operator := c.GetHeader("X-User-Id")
+	if operator == "" {
+		operator = "unknown"
+	}
+	requestIP := c.ClientIP()
+
+	if err := h.audit.Rollback(id, operator, requestIP); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Failed to rollback operation",
+			"details": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "rolled_back"})
+}
+
+type AuditMiddleware struct {
+	rules            *services.RuleService
+	quotas           *services.QuotaService
+	alertRules       *services.AlertRuleService
+	aggregationRules *services.AlertAggregationRuleService
+	suppressionRules *services.AlertSuppressionRuleService
+	audit            *services.AuditService
+}
+
+func NewAuditMiddleware(
+	rules *services.RuleService,
+	quotas *services.QuotaService,
+	alertRules *services.AlertRuleService,
+	aggregationRules *services.AlertAggregationRuleService,
+	suppressionRules *services.AlertSuppressionRuleService,
+	audit *services.AuditService,
+) *AuditMiddleware {
+	return &AuditMiddleware{
+		rules:            rules,
+		quotas:           quotas,
+		alertRules:       alertRules,
+		aggregationRules: aggregationRules,
+		suppressionRules: suppressionRules,
+		audit:            audit,
+	}
+}
+
+func (m *AuditMiddleware) Middleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method == "OPTIONS" || c.Request.Method == "GET" {
+			c.Next()
+			return
+		}
+
+		path := c.FullPath()
+		if path == "" {
+			c.Next()
+			return
+		}
+
+		resourceType, _, opType := m.parseRoute(path, c.Request.Method)
+		if resourceType == "" {
+			c.Next()
+			return
+		}
+
+		operator := c.GetHeader("X-User-Id")
+		if operator == "" {
+			operator = "unknown"
+		}
+		requestIP := c.ClientIP()
+
+		resourceID := c.Param("id")
+		var createdResourceID string
+
+		if opType == models.AuditOpCreate {
+			createdResourceID = m.extractCreatedResourceID(c, resourceType)
+		}
+
+		var beforeSnapshot interface{}
+		if opType != models.AuditOpCreate && resourceID != "" {
+			beforeSnapshot = m.getResource(resourceType, resourceID)
+		}
+
+		c.Next()
+
+		if c.Writer.Status() >= 400 {
+			return
+		}
+
+		var afterSnapshot interface{}
+		var finalResourceID string
+
+		if opType == models.AuditOpCreate {
+			finalResourceID = createdResourceID
+			if finalResourceID != "" {
+				afterSnapshot = m.getResource(resourceType, finalResourceID)
+			}
+		} else if opType == models.AuditOpDelete {
+			finalResourceID = resourceID
+			afterSnapshot = nil
+		} else {
+			finalResourceID = resourceID
+			afterSnapshot = m.getResource(resourceType, resourceID)
+		}
+
+		if finalResourceID == "" {
+			finalResourceID = resourceID
+		}
+
+		_ = m.audit.RecordLog(operator, opType, resourceType,
+			finalResourceID,
+			beforeSnapshot, afterSnapshot, requestIP)
+	}
+}
+
+func (m *AuditMiddleware) parseRoute(path, method string) (models.AuditResourceType, string, models.AuditOperationType) {
+	patterns := []struct {
+		pattern      string
+		resourceType models.AuditResourceType
+		operations   map[string]models.AuditOperationType
+	}{
+		{
+			pattern:      "/api/v1/rules",
+			resourceType: models.AuditResRule,
+			operations:   map[string]models.AuditOperationType{"POST": models.AuditOpCreate},
+		},
+		{
+			pattern:      "/api/v1/rules/:id",
+			resourceType: models.AuditResRule,
+			operations: map[string]models.AuditOperationType{
+				"PUT":    models.AuditOpUpdate,
+				"DELETE": models.AuditOpDelete,
+			},
+		},
+		{
+			pattern:      "/api/v1/rules/:id/toggle",
+			resourceType: models.AuditResRule,
+			operations:   map[string]models.AuditOperationType{"PATCH": models.AuditOpToggle},
+		},
+		{
+			pattern:      "/api/v1/quotas",
+			resourceType: models.AuditResQuota,
+			operations:   map[string]models.AuditOperationType{"POST": models.AuditOpUpdate},
+		},
+		{
+			pattern:      "/api/v1/quotas/:id",
+			resourceType: models.AuditResQuota,
+			operations:   map[string]models.AuditOperationType{"DELETE": models.AuditOpDelete},
+		},
+		{
+			pattern:      "/api/v1/alert-rules",
+			resourceType: models.AuditResAlertRule,
+			operations:   map[string]models.AuditOperationType{"POST": models.AuditOpCreate},
+		},
+		{
+			pattern:      "/api/v1/alert-rules/:id",
+			resourceType: models.AuditResAlertRule,
+			operations: map[string]models.AuditOperationType{
+				"PUT":    models.AuditOpUpdate,
+				"DELETE": models.AuditOpDelete,
+			},
+		},
+		{
+			pattern:      "/api/v1/alert-rules/:id/toggle",
+			resourceType: models.AuditResAlertRule,
+			operations:   map[string]models.AuditOperationType{"PATCH": models.AuditOpToggle},
+		},
+		{
+			pattern:      "/api/v1/alert-aggregation-rules",
+			resourceType: models.AuditResAggregationRule,
+			operations:   map[string]models.AuditOperationType{"POST": models.AuditOpCreate},
+		},
+		{
+			pattern:      "/api/v1/alert-aggregation-rules/:id",
+			resourceType: models.AuditResAggregationRule,
+			operations: map[string]models.AuditOperationType{
+				"PUT":    models.AuditOpUpdate,
+				"DELETE": models.AuditOpDelete,
+			},
+		},
+		{
+			pattern:      "/api/v1/alert-aggregation-rules/:id/toggle",
+			resourceType: models.AuditResAggregationRule,
+			operations:   map[string]models.AuditOperationType{"PATCH": models.AuditOpToggle},
+		},
+		{
+			pattern:      "/api/v1/alert-suppression-rules",
+			resourceType: models.AuditResSuppressionRule,
+			operations:   map[string]models.AuditOperationType{"POST": models.AuditOpCreate},
+		},
+		{
+			pattern:      "/api/v1/alert-suppression-rules/:id",
+			resourceType: models.AuditResSuppressionRule,
+			operations: map[string]models.AuditOperationType{
+				"PUT":    models.AuditOpUpdate,
+				"DELETE": models.AuditOpDelete,
+			},
+		},
+		{
+			pattern:      "/api/v1/alert-suppression-rules/:id/toggle",
+			resourceType: models.AuditResSuppressionRule,
+			operations:   map[string]models.AuditOperationType{"PATCH": models.AuditOpToggle},
+		},
+	}
+
+	for _, p := range patterns {
+		if path == p.pattern {
+			if op, ok := p.operations[method]; ok {
+				resourceID := ""
+				if strings.Contains(path, ":id") {
+					resourceID = "{{id}}"
+				}
+				return p.resourceType, resourceID, op
+			}
+		}
+	}
+
+	return "", "", ""
+}
+
+func (m *AuditMiddleware) getResource(resType models.AuditResourceType, resID string) interface{} {
+	switch resType {
+	case models.AuditResRule:
+		if rule, err := m.rules.Get(resID); err == nil {
+			return rule
+		}
+	case models.AuditResAlertRule:
+		if rule, err := m.alertRules.Get(resID); err == nil {
+			return rule
+		}
+	case models.AuditResAggregationRule:
+		if rule, err := m.aggregationRules.Get(resID); err == nil {
+			return rule
+		}
+	case models.AuditResSuppressionRule:
+		if rule, err := m.suppressionRules.Get(resID); err == nil {
+			return rule
+		}
+	case models.AuditResQuota:
+		id, err := strconv.ParseInt(resID, 10, 64)
+		if err == nil {
+			quotas, err := m.quotas.List()
+			if err == nil {
+				for _, q := range quotas {
+					if q.ID == id {
+						return q
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (m *AuditMiddleware) extractCreatedResourceID(c *gin.Context, resType models.AuditResourceType) string {
+	if c.Request.Body == nil {
+		return ""
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return ""
+	}
+
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return ""
+	}
+
+	if id, ok := data["id"]; ok {
+		switch v := id.(type) {
+		case string:
+			return v
+		case float64:
+			return strconv.FormatInt(int64(v), 10)
+		}
+	}
+
+	return ""
 }
 
 func CORSMiddleware() gin.HandlerFunc {

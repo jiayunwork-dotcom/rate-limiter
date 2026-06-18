@@ -73,6 +73,10 @@ import { AlertPushMessage, AlertSeverity } from './models/models';
             <mat-icon matListItemIcon>notifications_active</mat-icon>
             <span matListItemTitle>告警中心</span>
           </a>
+          <a mat-list-item routerLink="/audit-log" routerLinkActive="active">
+            <mat-icon matListItemIcon>history</mat-icon>
+            <span matListItemTitle>审计日志</span>
+          </a>
         </mat-nav-list>
       </mat-sidenav>
 

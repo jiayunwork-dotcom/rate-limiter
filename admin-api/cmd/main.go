@@ -82,6 +82,7 @@ func main() {
 	suppressionRuleRepo := repository.NewAlertSuppressionRuleRepo(db)
 	aggregationGroupRepo := repository.NewAlertAggregationGroupRepo(db)
 	aggregationEventRepo := repository.NewAlertAggregationEventRepo(db)
+	auditRepo := repository.NewAuditRepo(db)
 
 	wsHub := services.NewWebSocketHub()
 	go wsHub.Run()
@@ -95,6 +96,13 @@ func main() {
 	alertEventSvc := services.NewAlertEventService(alertEventRepo, wsHub)
 	aggregationRuleSvc := services.NewAlertAggregationRuleService(aggregationRuleRepo)
 	suppressionRuleSvc := services.NewAlertSuppressionRuleService(suppressionRuleRepo)
+	auditSvc := services.NewAuditService(auditRepo)
+
+	auditSvc.SetRuleService(ruleSvc)
+	auditSvc.SetQuotaService(quotaSvc)
+	auditSvc.SetAlertRuleService(alertRuleSvc)
+	auditSvc.SetAggregationRuleService(aggregationRuleSvc)
+	auditSvc.SetSuppressionRuleService(suppressionRuleSvc)
 
 	alertSuppressionSvc := services.NewAlertSuppressionService(suppressionRuleSvc, alertEventRepo)
 	alertAggregationSvc := services.NewAlertAggregationService(
@@ -121,13 +129,17 @@ func main() {
 	}()
 
 	h := handlers.NewHandler(ruleSvc, eventSvc, quotaSvc, adaptiveSvc, templateSvc, alertRuleSvc, alertEventSvc,
-		aggregationRuleSvc, suppressionRuleSvc, alertAggregationSvc, alertSuppressionSvc, wsHub)
+		aggregationRuleSvc, suppressionRuleSvc, alertAggregationSvc, alertSuppressionSvc, auditSvc, wsHub)
+
+	auditMiddleware := handlers.NewAuditMiddleware(ruleSvc, quotaSvc, alertRuleSvc,
+		aggregationRuleSvc, suppressionRuleSvc, auditSvc)
 
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
 	engine.Use(gin.Recovery(), gin.Logger(), handlers.CORSMiddleware())
 
 	api := engine.Group("/api/v1")
+	api.Use(auditMiddleware.Middleware())
 	{
 		api.GET("/health", h.Health)
 
@@ -225,6 +237,16 @@ func main() {
 			aggregationGroups.GET("", h.ListAggregationGroups)
 			aggregationGroups.GET("/:id/events", h.GetAggregationGroupEvents)
 		}
+
+		auditLogs := api.Group("/audit-logs")
+		{
+			auditLogs.GET("", h.ListAuditLogs)
+			auditLogs.GET("/stats", h.GetAuditStats)
+			auditLogs.GET("/operators", h.ListAuditOperators)
+			auditLogs.GET("/timeline", h.GetAuditTimeline)
+			auditLogs.GET("/:id", h.GetAuditLog)
+			auditLogs.POST("/:id/rollback", h.RollbackAuditOperation)
+		}
 	}
 
 	engine.GET("/ws/alerts", h.WebSocketEndpoint)
@@ -268,6 +290,7 @@ func autoMigrateDB(db *gorm.DB) error {
 		&models.AlertSuppressionRule{},
 		&models.AlertAggregationGroup{},
 		&models.AlertAggregationEvent{},
+		&models.AuditLog{},
 	)
 	if err != nil {
 		return err
@@ -290,6 +313,12 @@ func autoMigrateDB(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_groups_window_ends ON alert_aggregation_groups(window_ends_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_events_group ON alert_aggregation_events(aggregation_group_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_alert_aggregation_events_event ON alert_aggregation_events(alert_event_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_operator ON audit_logs(operator, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_type ON audit_logs(resource_type, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_id ON audit_logs(resource_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_operation_type ON audit_logs(operation_type, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_composite ON audit_logs(operator, resource_type, resource_id, created_at DESC)`,
 	}
 
 	for _, sql := range indexSQL {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1458,4 +1460,368 @@ func (s *AlertSuppressionService) dimensionsMatch(source, target *models.AlertEv
 		}
 	}
 	return true
+}
+
+type AuditService struct {
+	auditRepo          *repository.AuditRepo
+	ruleSvc            *RuleService
+	quotaSvc           *QuotaService
+	alertRuleSvc       *AlertRuleService
+	aggregationRuleSvc *AlertAggregationRuleService
+	suppressionRuleSvc *AlertSuppressionRuleService
+}
+
+func NewAuditService(auditRepo *repository.AuditRepo) *AuditService {
+	return &AuditService{auditRepo: auditRepo}
+}
+
+func (s *AuditService) SetRuleService(svc *RuleService) {
+	s.ruleSvc = svc
+}
+
+func (s *AuditService) SetQuotaService(svc *QuotaService) {
+	s.quotaSvc = svc
+}
+
+func (s *AuditService) SetAlertRuleService(svc *AlertRuleService) {
+	s.alertRuleSvc = svc
+}
+
+func (s *AuditService) SetAggregationRuleService(svc *AlertAggregationRuleService) {
+	s.aggregationRuleSvc = svc
+}
+
+func (s *AuditService) SetSuppressionRuleService(svc *AlertSuppressionRuleService) {
+	s.suppressionRuleSvc = svc
+}
+
+func (s *AuditService) RecordLog(
+	operator string,
+	opType models.AuditOperationType,
+	resType models.AuditResourceType,
+	resID string,
+	beforeSnapshot, afterSnapshot interface{},
+	requestIP string,
+) error {
+	var beforeJSON, afterJSON, diffJSON json.RawMessage
+
+	if beforeSnapshot != nil {
+		data, err := json.Marshal(beforeSnapshot)
+		if err == nil {
+			beforeJSON = data
+		}
+	}
+
+	if afterSnapshot != nil {
+		data, err := json.Marshal(afterSnapshot)
+		if err == nil {
+			afterJSON = data
+		}
+	}
+
+	diff := computeDiff(beforeSnapshot, afterSnapshot)
+	if diff != nil {
+		data, err := json.Marshal(diff)
+		if err == nil {
+			diffJSON = data
+		}
+	}
+
+	log := &models.AuditLog{
+		Operator:       operator,
+		OperationType:  opType,
+		ResourceType:   resType,
+		ResourceID:     resID,
+		BeforeSnapshot: beforeJSON,
+		AfterSnapshot:  afterJSON,
+		DiffSummary:    diffJSON,
+		RequestIP:      requestIP,
+	}
+
+	return s.auditRepo.Create(log)
+}
+
+func computeDiff(before, after interface{}) map[string]models.DiffField {
+	if before == nil || after == nil {
+		return nil
+	}
+
+	beforeMap := make(map[string]interface{})
+	afterMap := make(map[string]interface{})
+
+	beforeBytes, _ := json.Marshal(before)
+	afterBytes, _ := json.Marshal(after)
+	json.Unmarshal(beforeBytes, &beforeMap)
+	json.Unmarshal(afterBytes, &afterMap)
+
+	diff := make(map[string]models.DiffField)
+	allKeys := make(map[string]bool)
+
+	for k := range beforeMap {
+		allKeys[k] = true
+	}
+	for k := range afterMap {
+		allKeys[k] = true
+	}
+
+	skipFields := map[string]bool{
+		"createdAt": true,
+		"updatedAt": true,
+		"version":   true,
+		"created_at": true,
+		"updated_at": true,
+	}
+
+	for k := range allKeys {
+		if skipFields[k] {
+			continue
+		}
+		bVal, bOk := beforeMap[k]
+		aVal, aOk := afterMap[k]
+
+		if !bOk {
+			diff[k] = models.DiffField{OldValue: nil, NewValue: aVal}
+		} else if !aOk {
+			diff[k] = models.DiffField{OldValue: bVal, NewValue: nil}
+		} else {
+			bStr, _ := json.Marshal(bVal)
+			aStr, _ := json.Marshal(aVal)
+			if string(bStr) != string(aStr) {
+				diff[k] = models.DiffField{OldValue: bVal, NewValue: aVal}
+			}
+		}
+	}
+
+	if len(diff) == 0 {
+		return nil
+	}
+	return diff
+}
+
+func (s *AuditService) List(query models.AuditLogQuery) (*models.PaginatedResult, error) {
+	return s.auditRepo.List(query)
+}
+
+func (s *AuditService) Get(id int64) (*models.AuditLog, error) {
+	return s.auditRepo.Get(id)
+}
+
+func (s *AuditService) GetTimeline(resType models.AuditResourceType, resID string) ([]models.TimelineNode, error) {
+	return s.auditRepo.GetTimeline(resType, resID)
+}
+
+func (s *AuditService) GetStats() (*models.AuditStats, error) {
+	return s.auditRepo.GetStats()
+}
+
+func (s *AuditService) ListOperators() ([]string, error) {
+	return s.auditRepo.ListOperators()
+}
+
+func (s *AuditService) Rollback(auditLogID int64, operator string, requestIP string) error {
+	log, err := s.auditRepo.Get(auditLogID)
+	if err != nil {
+		return fmt.Errorf("audit log not found: %w", err)
+	}
+
+	if log.OperationType == models.AuditOpCreate || log.OperationType == models.AuditOpRollback {
+		return fmt.Errorf("operation type %s cannot be rolled back", log.OperationType)
+	}
+
+	var beforeSnapshot map[string]interface{}
+	if len(log.BeforeSnapshot) > 0 {
+		if err := json.Unmarshal(log.BeforeSnapshot, &beforeSnapshot); err != nil {
+			return fmt.Errorf("failed to parse before snapshot: %w", err)
+		}
+	}
+
+	switch log.ResourceType {
+	case models.AuditResRule:
+		return s.rollbackRule(log, beforeSnapshot, operator, requestIP)
+	case models.AuditResAlertRule:
+		return s.rollbackAlertRule(log, beforeSnapshot, operator, requestIP)
+	case models.AuditResAggregationRule:
+		return s.rollbackAggregationRule(log, beforeSnapshot, operator, requestIP)
+	case models.AuditResSuppressionRule:
+		return s.rollbackSuppressionRule(log, beforeSnapshot, operator, requestIP)
+	case models.AuditResQuota:
+		return s.rollbackQuota(log, beforeSnapshot, operator, requestIP)
+	default:
+		return fmt.Errorf("unsupported resource type: %s", log.ResourceType)
+	}
+}
+
+func (s *AuditService) rollbackRule(log *models.AuditLog, before map[string]interface{}, operator, requestIP string) error {
+	if s.ruleSvc == nil {
+		return fmt.Errorf("rule service not available")
+	}
+
+	switch log.OperationType {
+	case models.AuditOpDelete:
+		var rule models.RateLimitRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		if err := s.ruleSvc.Create(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResRule, log.ResourceID, nil, rule, requestIP)
+
+	case models.AuditOpUpdate, models.AuditOpToggle:
+		var rule models.RateLimitRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		rule.ID = log.ResourceID
+		afterRule, _ := s.ruleSvc.Get(log.ResourceID)
+		if err := s.ruleSvc.Update(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResRule, log.ResourceID, afterRule, rule, requestIP)
+	}
+
+	return fmt.Errorf("unsupported operation type: %s", log.OperationType)
+}
+
+func (s *AuditService) rollbackAlertRule(log *models.AuditLog, before map[string]interface{}, operator, requestIP string) error {
+	if s.alertRuleSvc == nil {
+		return fmt.Errorf("alert rule service not available")
+	}
+
+	switch log.OperationType {
+	case models.AuditOpDelete:
+		var rule models.AlertRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		if err := s.alertRuleSvc.Create(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResAlertRule, log.ResourceID, nil, rule, requestIP)
+
+	case models.AuditOpUpdate, models.AuditOpToggle:
+		var rule models.AlertRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		rule.ID = log.ResourceID
+		afterRule, _ := s.alertRuleSvc.Get(log.ResourceID)
+		if err := s.alertRuleSvc.Update(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResAlertRule, log.ResourceID, afterRule, rule, requestIP)
+	}
+
+	return fmt.Errorf("unsupported operation type: %s", log.OperationType)
+}
+
+func (s *AuditService) rollbackAggregationRule(log *models.AuditLog, before map[string]interface{}, operator, requestIP string) error {
+	if s.aggregationRuleSvc == nil {
+		return fmt.Errorf("aggregation rule service not available")
+	}
+
+	switch log.OperationType {
+	case models.AuditOpDelete:
+		var rule models.AlertAggregationRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		if err := s.aggregationRuleSvc.Create(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResAggregationRule, log.ResourceID, nil, rule, requestIP)
+
+	case models.AuditOpUpdate, models.AuditOpToggle:
+		var rule models.AlertAggregationRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		rule.ID = log.ResourceID
+		afterRule, _ := s.aggregationRuleSvc.Get(log.ResourceID)
+		if err := s.aggregationRuleSvc.Update(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResAggregationRule, log.ResourceID, afterRule, rule, requestIP)
+	}
+
+	return fmt.Errorf("unsupported operation type: %s", log.OperationType)
+}
+
+func (s *AuditService) rollbackSuppressionRule(log *models.AuditLog, before map[string]interface{}, operator, requestIP string) error {
+	if s.suppressionRuleSvc == nil {
+		return fmt.Errorf("suppression rule service not available")
+	}
+
+	switch log.OperationType {
+	case models.AuditOpDelete:
+		var rule models.AlertSuppressionRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		if err := s.suppressionRuleSvc.Create(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResSuppressionRule, log.ResourceID, nil, rule, requestIP)
+
+	case models.AuditOpUpdate, models.AuditOpToggle:
+		var rule models.AlertSuppressionRule
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &rule); err != nil {
+			return err
+		}
+		rule.ID = log.ResourceID
+		afterRule, _ := s.suppressionRuleSvc.Get(log.ResourceID)
+		if err := s.suppressionRuleSvc.Update(&rule); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResSuppressionRule, log.ResourceID, afterRule, rule, requestIP)
+	}
+
+	return fmt.Errorf("unsupported operation type: %s", log.OperationType)
+}
+
+func (s *AuditService) rollbackQuota(log *models.AuditLog, before map[string]interface{}, operator, requestIP string) error {
+	if s.quotaSvc == nil {
+		return fmt.Errorf("quota service not available")
+	}
+
+	switch log.OperationType {
+	case models.AuditOpDelete:
+		var quota models.QuotaConfig
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &quota); err != nil {
+			return err
+		}
+		if err := s.quotaSvc.Upsert(&quota); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResQuota, log.ResourceID, nil, quota, requestIP)
+
+	case models.AuditOpUpdate, models.AuditOpToggle:
+		var quota models.QuotaConfig
+		beforeBytes, _ := json.Marshal(before)
+		if err := json.Unmarshal(beforeBytes, &quota); err != nil {
+			return err
+		}
+		afterQuota, _ := s.quotaSvc.List()
+		_ = afterQuota
+		id, err := strconv.ParseInt(log.ResourceID, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid quota id: %w", err)
+		}
+		quota.ID = id
+		if err := s.quotaSvc.Upsert(&quota); err != nil {
+			return err
+		}
+		return s.RecordLog(operator, models.AuditOpRollback, models.AuditResQuota, log.ResourceID, nil, quota, requestIP)
+	}
+
+	return fmt.Errorf("unsupported operation type: %s", log.OperationType)
 }

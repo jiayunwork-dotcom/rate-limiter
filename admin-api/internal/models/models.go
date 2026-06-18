@@ -485,3 +485,73 @@ type AggregationPushMessage struct {
 	LatestDimension  string                  `json:"latestDimension"`
 	UniqueValues     []string                `json:"uniqueValues"`
 }
+
+type AuditOperationType string
+type AuditResourceType string
+
+const (
+	AuditOpCreate   AuditOperationType = "create"
+	AuditOpUpdate   AuditOperationType = "update"
+	AuditOpDelete   AuditOperationType = "delete"
+	AuditOpToggle   AuditOperationType = "toggle"
+	AuditOpRollback AuditOperationType = "rollback"
+)
+
+const (
+	AuditResRule               AuditResourceType = "rule"
+	AuditResQuota              AuditResourceType = "quota"
+	AuditResAlertRule          AuditResourceType = "alert_rule"
+	AuditResAggregationRule    AuditResourceType = "aggregation_rule"
+	AuditResSuppressionRule    AuditResourceType = "suppression_rule"
+)
+
+type DiffField struct {
+	OldValue interface{} `json:"oldValue"`
+	NewValue interface{} `json:"newValue"`
+}
+
+type AuditLog struct {
+	ID              int64               `json:"id" gorm:"column:id;primaryKey"`
+	Operator        string              `json:"operator" gorm:"column:operator;type:varchar(128);index"`
+	OperationType   AuditOperationType  `json:"operationType" gorm:"column:operation_type;type:varchar(16);index"`
+	ResourceType    AuditResourceType   `json:"resourceType" gorm:"column:resource_type;type:varchar(32);index"`
+	ResourceID      string              `json:"resourceId" gorm:"column:resource_id;type:varchar(128);index"`
+	BeforeSnapshot  json.RawMessage     `json:"beforeSnapshot" gorm:"column:before_snapshot;type:jsonb"`
+	AfterSnapshot   json.RawMessage     `json:"afterSnapshot" gorm:"column:after_snapshot;type:jsonb"`
+	DiffSummary     json.RawMessage     `json:"diffSummary" gorm:"column:diff_summary;type:jsonb"`
+	RequestIP       string              `json:"requestIp" gorm:"column:request_ip;type:varchar(64)"`
+	CreatedAt       time.Time           `json:"createdAt" gorm:"column:created_at;index"`
+}
+
+func (AuditLog) TableName() string {
+	return "audit_logs"
+}
+
+type AuditLogQuery struct {
+	Operator      string              `form:"operator"`
+	ResourceType  AuditResourceType   `form:"resource_type"`
+	ResourceID    string              `form:"resource_id"`
+	OperationType AuditOperationType  `form:"operation_type"`
+	StartTime     *time.Time          `form:"-"`
+	EndTime       *time.Time          `form:"-"`
+	Pagination
+}
+
+type AuditStats struct {
+	TodayTotalCount   int64  `json:"todayTotalCount"`
+	WeekTopOperator   string `json:"weekTopOperator"`
+	WeekTopCount      int64  `json:"weekTopCount"`
+	LastOperationTime time.Time `json:"lastOperationTime"`
+	LastOperationType AuditOperationType `json:"lastOperationType"`
+	LastResourceType  AuditResourceType  `json:"lastResourceType"`
+	LastResourceID    string `json:"lastResourceId"`
+}
+
+type TimelineNode struct {
+	ID            int64              `json:"id"`
+	OperationType AuditOperationType `json:"operationType"`
+	Operator      string             `json:"operator"`
+	DiffSummary   json.RawMessage    `json:"diffSummary"`
+	CreatedAt     time.Time          `json:"createdAt"`
+	CanRollback   bool               `json:"canRollback"`
+}

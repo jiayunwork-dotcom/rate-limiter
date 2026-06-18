@@ -362,3 +362,50 @@ export interface PaginatedAlertRuleResult {
   pageSize: number;
   data: AlertRule[];
 }
+
+export type AuditOperationType = 'create' | 'update' | 'delete' | 'toggle' | 'rollback';
+export type AuditResourceType = 'rule' | 'quota' | 'alert_rule' | 'aggregation_rule' | 'suppression_rule';
+
+export interface DiffField {
+  oldValue: any;
+  newValue: any;
+}
+
+export interface AuditLog {
+  id: number;
+  operator: string;
+  operationType: AuditOperationType;
+  resourceType: AuditResourceType;
+  resourceId: string;
+  beforeSnapshot: any;
+  afterSnapshot: any;
+  diffSummary: Record<string, DiffField>;
+  requestIp: string;
+  createdAt: string;
+}
+
+export interface AuditStats {
+  todayTotalCount: number;
+  weekTopOperator: string;
+  weekTopCount: number;
+  lastOperationTime: string;
+  lastOperationType: AuditOperationType;
+  lastResourceType: AuditResourceType;
+  lastResourceId: string;
+}
+
+export interface TimelineNode {
+  id: number;
+  operationType: AuditOperationType;
+  operator: string;
+  diffSummary: Record<string, DiffField>;
+  createdAt: string;
+  canRollback: boolean;
+}
+
+export interface PaginatedAuditLogResult {
+  total: number;
+  page: number;
+  pageSize: number;
+  data: AuditLog[];
+}

@@ -1363,3 +1363,145 @@ func (r *AlertAggregationEventRepo) FindByEventID(eventID int64) ([]models.Alert
 	err := r.db.Where("alert_event_id = ?", eventID).Find(&items).Error
 	return items, err
 }
+
+type AuditRepo struct {
+	db *gorm.DB
+}
+
+func NewAuditRepo(db *gorm.DB) *AuditRepo {
+	return &AuditRepo{db: db}
+}
+
+func (r *AuditRepo) Create(log *models.AuditLog) error {
+	log.CreatedAt = time.Now()
+	return r.db.Create(log).Error
+}
+
+func (r *AuditRepo) List(query models.AuditLogQuery) (*models.PaginatedResult, error) {
+	q := r.db.Model(&models.AuditLog{})
+	if query.Operator != "" {
+		q = q.Where("operator = ?", query.Operator)
+	}
+	if query.ResourceType != "" {
+		q = q.Where("resource_type = ?", query.ResourceType)
+	}
+	if query.ResourceID != "" {
+		q = q.Where("resource_id = ?", query.ResourceID)
+	}
+	if query.OperationType != "" {
+		q = q.Where("operation_type = ?", query.OperationType)
+	}
+	if query.StartTime != nil {
+		q = q.Where("created_at >= ?", *query.StartTime)
+	}
+	if query.EndTime != nil {
+		q = q.Where("created_at <= ?", *query.EndTime)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	var logs []models.AuditLog
+	err := q.Order("created_at DESC").
+		Offset(query.GetOffset()).
+		Limit(query.GetPageSize()).
+		Find(&logs).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.PaginatedResult{
+		Total:    total,
+		Page:     query.Page,
+		PageSize: query.GetPageSize(),
+		Data:     logs,
+	}, nil
+}
+
+func (r *AuditRepo) Get(id int64) (*models.AuditLog, error) {
+	var log models.AuditLog
+	err := r.db.Where("id = ?", id).First(&log).Error
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
+func (r *AuditRepo) GetTimeline(resourceType models.AuditResourceType, resourceID string) ([]models.TimelineNode, error) {
+	var logs []models.AuditLog
+	err := r.db.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
+		Order("created_at ASC").
+		Find(&logs).Error
+	if err != nil {
+		return nil, err
+	}
+
+	nodes := make([]models.TimelineNode, 0, len(logs))
+	for _, log := range logs {
+		canRollback := log.OperationType == models.AuditOpUpdate ||
+			log.OperationType == models.AuditOpToggle ||
+			log.OperationType == models.AuditOpDelete
+		nodes = append(nodes, models.TimelineNode{
+			ID:            log.ID,
+			OperationType: log.OperationType,
+			Operator:      log.Operator,
+			DiffSummary:   log.DiffSummary,
+			CreatedAt:     log.CreatedAt,
+			CanRollback:   canRollback,
+		})
+	}
+	return nodes, nil
+}
+
+func (r *AuditRepo) GetStats() (*models.AuditStats, error) {
+	stats := &models.AuditStats{}
+
+	todayStart := time.Now().Truncate(24 * time.Hour)
+	var todayCount int64
+	if err := r.db.Model(&models.AuditLog{}).
+		Where("created_at >= ?", todayStart).
+		Count(&todayCount).Error; err != nil {
+		return nil, err
+	}
+	stats.TodayTotalCount = todayCount
+
+	weekStart := time.Now().AddDate(0, 0, -7)
+	type operatorCount struct {
+		Operator string
+		Cnt      int64
+	}
+	var topOp operatorCount
+	err := r.db.Model(&models.AuditLog{}).
+		Select("operator, COUNT(*) as cnt").
+		Where("created_at >= ?", weekStart).
+		Group("operator").
+		Order("cnt DESC").
+		Limit(1).
+		Scan(&topOp).Error
+	if err == nil && topOp.Operator != "" {
+		stats.WeekTopOperator = topOp.Operator
+		stats.WeekTopCount = topOp.Cnt
+	}
+
+	var lastLog models.AuditLog
+	err = r.db.Order("created_at DESC").Limit(1).Find(&lastLog).Error
+	if err == nil && lastLog.ID > 0 {
+		stats.LastOperationTime = lastLog.CreatedAt
+		stats.LastOperationType = lastLog.OperationType
+		stats.LastResourceType = lastLog.ResourceType
+		stats.LastResourceID = lastLog.ResourceID
+	}
+
+	return stats, nil
+}
+
+func (r *AuditRepo) ListOperators() ([]string, error) {
+	var operators []string
+	err := r.db.Model(&models.AuditLog{}).
+		Distinct("operator").
+		Order("operator ASC").
+		Pluck("operator", &operators).Error
+	return operators, err
+}

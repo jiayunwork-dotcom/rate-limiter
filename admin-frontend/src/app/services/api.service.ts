@@ -8,7 +8,8 @@ import {
   PaginatedAlertResult, PaginatedAlertRuleResult, AlertStatus, AlertSeverity,
   AlertAggregationRule, AlertSuppressionRule, AlertAggregationGroup,
   PaginatedAggregationRuleResult, PaginatedSuppressionRuleResult, PaginatedAggregationGroupResult,
-  AggregationDimensionType
+  AggregationDimensionType, AuditLog, AuditStats, TimelineNode,
+  PaginatedAuditLogResult, AuditOperationType, AuditResourceType
 } from '../models/models';
 
 @Injectable({ providedIn: 'root' })
@@ -308,5 +309,46 @@ export class ApiService {
       });
     }
     return this.http.get<PaginatedAlertResult>(`${this.baseUrl}/alert-aggregation-groups/${groupId}/events`, { params: httpParams });
+  }
+
+  listAuditLogs(params?: {
+    operator?: string;
+    resourceType?: AuditResourceType;
+    resourceId?: string;
+    operationType?: AuditOperationType;
+    startTime?: string;
+    endTime?: string;
+    page?: number;
+    pageSize?: number;
+  }): Observable<PaginatedAuditLogResult> {
+    let httpParams = new HttpParams();
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && String(v) !== '') httpParams = httpParams.set(k, String(v));
+      });
+    }
+    return this.http.get<PaginatedAuditLogResult>(`${this.baseUrl}/audit-logs`, { params: httpParams });
+  }
+
+  getAuditLog(id: number): Observable<AuditLog> {
+    return this.http.get<AuditLog>(`${this.baseUrl}/audit-logs/${id}`);
+  }
+
+  getAuditTimeline(resourceId: string): Observable<TimelineNode[]> {
+    let httpParams = new HttpParams();
+    httpParams = httpParams.set('resourceId', resourceId);
+    return this.http.get<TimelineNode[]>(`${this.baseUrl}/audit-logs/timeline`, { params: httpParams });
+  }
+
+  getAuditStats(): Observable<AuditStats> {
+    return this.http.get<AuditStats>(`${this.baseUrl}/audit-logs/stats`);
+  }
+
+  listAuditOperators(): Observable<string[]> {
+    return this.http.get<string[]>(`${this.baseUrl}/audit-logs/operators`);
+  }
+
+  rollbackAuditOperation(id: number): Observable<any> {
+    return this.http.post<any>(`${this.baseUrl}/audit-logs/${id}/rollback`, {});
   }
 }

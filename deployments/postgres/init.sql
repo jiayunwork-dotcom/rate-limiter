@@ -423,3 +423,23 @@ ON CONFLICT DO NOTHING;
 INSERT INTO alert_suppression_rules (id, name, source_severity, source_status, target_severity, match_dimension_fields, enabled) VALUES
 ('suppress-critical-suppresses-warning-info', 'Critical告警抑制Warning和Info', 'critical', 'firing', 'info', 'dimension_value', true)
 ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id BIGSERIAL PRIMARY KEY,
+    operator VARCHAR(128) NOT NULL,
+    operation_type VARCHAR(16) NOT NULL,
+    resource_type VARCHAR(32) NOT NULL,
+    resource_id VARCHAR(128) NOT NULL,
+    before_snapshot JSONB,
+    after_snapshot JSONB,
+    diff_summary JSONB,
+    request_ip VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_operator ON audit_logs(operator, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_type ON audit_logs(resource_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_id ON audit_logs(resource_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_operation_type ON audit_logs(operation_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_composite ON audit_logs(operator, resource_type, resource_id, created_at DESC);

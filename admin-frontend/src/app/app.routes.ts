@@ -6,6 +6,7 @@ import { AdaptiveStatusComponent } from './pages/adaptive-status/adaptive-status
 import { EventsLogComponent } from './pages/events-log/events-log.component';
 import { RuleTemplatesComponent } from './pages/rule-templates/rule-templates.component';
 import { AlertCenterComponent } from './pages/alert-center/alert-center.component';
+import { AuditLogComponent } from './pages/audit-log/audit-log.component';
 
 export const routes: Routes = [
   { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
@@ -15,5 +16,6 @@ export const routes: Routes = [
   { path: 'quota-hierarchy', component: QuotaHierarchyComponent },
   { path: 'adaptive-status', component: AdaptiveStatusComponent },
   { path: 'events-log', component: EventsLogComponent },
-  { path: 'alert-center', component: AlertCenterComponent }
+  { path: 'alert-center', component: AlertCenterComponent },
+  { path: 'audit-log', component: AuditLogComponent }
 ];
