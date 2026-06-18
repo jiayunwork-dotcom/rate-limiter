@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/ratelimiter/admin-api/internal/models"
 	"github.com/ratelimiter/admin-api/internal/services"
@@ -618,7 +620,11 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 		body.AcknowledgedBy = "system"
 	}
 	if err := h.alertEvents.Acknowledge(id, body.AcknowledgedBy); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "alert event not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "acknowledged"})

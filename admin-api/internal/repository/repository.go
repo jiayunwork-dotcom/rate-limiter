@@ -955,7 +955,18 @@ func (r *AlertEventRepo) Acknowledge(id int64, acknowledgedBy string) error {
 			"acknowledged_at": now,
 			"updated_at":      now,
 		})
-	return res.Error
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		var count int64
+		r.db.Model(&models.AlertEvent{}).Where("id = ?", id).Count(&count)
+		if count == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return errors.New("alert is not in firing state")
+	}
+	return nil
 }
 
 func (r *AlertEventRepo) Resolve(id int64) error {

@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/ratelimiter/admin-api/internal/handlers"
+	"github.com/ratelimiter/admin-api/internal/models"
 	"github.com/ratelimiter/admin-api/internal/repository"
 	"github.com/ratelimiter/admin-api/internal/services"
 )
@@ -47,6 +48,11 @@ func main() {
 		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
 	log.Println("Connected to PostgreSQL")
+
+	if err := autoMigrateDB(db); err != nil {
+		log.Fatalf("Failed to migrate database: %v", err)
+	}
+	log.Println("Database migration completed")
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         viper.GetString("redis_addr"),
@@ -207,4 +213,77 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 	srv.Shutdown(shutdownCtx)
+}
+
+func autoMigrateDB(db *gorm.DB) error {
+	err := db.AutoMigrate(
+		&models.RateLimitRule{},
+		&models.RuleVersion{},
+		&models.QuotaConfig{},
+		&models.RateLimitEvent{},
+		&models.Tenant{},
+		&models.AlertRule{},
+		&models.AlertEvent{},
+		&models.RuleTemplate{},
+	)
+	if err != nil {
+		return err
+	}
+
+	indexSQL := []string{
+		`CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled ON alert_rules(enabled)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_rules_trigger_type ON alert_rules(trigger_type)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_rules_scope ON alert_rules(scope_type, scope_value)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_status ON alert_events(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_severity ON alert_events(severity)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_rule ON alert_events(alert_rule_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_dimension ON alert_events(dimension_type, dimension_value, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_created ON alert_events(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_status_created ON alert_events(status, created_at DESC)`,
+	}
+
+	for _, sql := range indexSQL {
+		if err := db.Exec(sql).Error; err != nil {
+			log.Printf("Warning: failed to create index: %v", err)
+		}
+	}
+
+	initAlertRules := []models.AlertRule{
+		{
+			ID:                   "rule-api-high-reject",
+			Name:                   "API高拒绝率告警",
+			Description:            "当某个API的拒绝次数在60秒内超过100次时触发告警",
+			Severity:               models.SeverityCritical,
+			Enabled:                true,
+			TriggerType:            models.TriggerTypeThreshold,
+			TriggerConfigJSON:      []byte(`{"windowSeconds": 60, "threshold": 100, "metric": "reject_count"}`),
+			ScopeType:              models.ScopeGlobal,
+			SilentPeriodSeconds:    300,
+			RetentionHours:         168,
+		},
+		{
+			ID:                   "rule-tenant-reject-rate",
+			Name:                 "租户拒绝率告警",
+			Description:          "当某个租户的拒绝率在5分钟内超过20%时触发告警",
+			Severity:             models.SeverityWarning,
+			Enabled:              true,
+			TriggerType:          models.TriggerTypeRate,
+			TriggerConfigJSON:    []byte(`{"windowSeconds": 300, "thresholdPercent": 20, "metric": "reject_rate"}`),
+			ScopeType:            models.ScopeGlobal,
+			SilentPeriodSeconds:  600,
+			RetentionHours:       168,
+		},
+	}
+
+	for _, rule := range initAlertRules {
+		var existing models.AlertRule
+		result := db.Where("id = ?", rule.ID).First(&existing)
+		if result.Error == gorm.ErrRecordNotFound {
+			if err := db.Create(&rule).Error; err != nil {
+				log.Printf("Warning: failed to create alert rule %s: %v", rule.ID, err)
+			}
+		}
+	}
+
+	return nil
 }
